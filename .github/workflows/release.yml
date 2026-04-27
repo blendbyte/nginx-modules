@@ -1,0 +1,226 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: 'GitHub Actions run ID of the build to publish'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (skip the upload to production)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    name: publish to apt.blendbyte.net/nginx
+    runs-on: ubuntu-latest
+    environment: production  # Requires manual approval if configured
+    env:
+      # GPG key for signing the apt repo. The key id is publishable
+      # information; only the private key material itself is sensitive.
+      GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+      # Codenames we publish for. Must match what build.yml produces.
+      CODENAMES: bookworm trixie
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install reprepro, gnupg, and lftp
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends reprepro gnupg lftp
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./downloaded-artifacts
+          merge-multiple: false
+
+      - name: Consolidate artifacts
+        run: |
+          mkdir -p ./artifacts
+          # download-artifact creates one subdir per artifact name
+          # (debs-bookworm-amd64, debs-trixie-arm64, etc.)
+          find ./downloaded-artifacts -name '*.deb' -exec mv {} ./artifacts/ \;
+          echo "Total .deb files: $(ls ./artifacts/*.deb | wc -l)"
+          ls -la ./artifacts/
+
+      - name: Set up GPG signing key
+        run: |
+          # Write the secret to a file rather than passing it as an env
+          # var or via command line where it could leak into ps output.
+          mkdir -m 700 -p ./gnupg
+          echo '${{ secrets.GPG_PRIVATE_KEY }}' > /tmp/gpg-key.asc
+          chmod 600 /tmp/gpg-key.asc
+          GNUPGHOME="$PWD/gnupg" gpg --batch --import /tmp/gpg-key.asc 2>&1 | tail -5
+
+      - name: Initialize reprepro tree
+        run: |
+          mkdir -p ./apt-repo/conf ./apt-repo/db ./apt-repo/dists ./apt-repo/pool
+          for codename in $CODENAMES; do
+            cat >> ./apt-repo/conf/distributions <<EOF
+          Origin: Blendbyte
+          Label: Blendbyte nginx-modules
+          Codename: $codename
+          Suite: $codename
+          Architectures: amd64 arm64 source
+          Components: main
+          Description: Debian dynamic modules for nginx, complementing nginx.org packages
+          SignWith: $GPG_KEY_ID
+
+          EOF
+          done
+          cat > ./apt-repo/conf/options <<EOF
+          verbose
+          basedir $PWD/apt-repo
+          EOF
+
+      # Pull existing repo state from the FTPS server. Without this,
+      # every publish would overwrite the server with only the .debs
+      # from the current run, losing all historical packages.
+      #
+      # continue-on-error is set because on the very first publish the
+      # target directory may not exist yet on the server. Subsequent
+      # runs will pull successfully. debug 3 in the lftp script shows
+      # the FTP protocol exchange in the workflow log if anything fails.
+      - name: Pull existing apt repo state
+        if: ${{ !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          LFTP_PASSWORD:   ${{ secrets.APT_FTP_PASS }}
+          APT_SERVER:      ${{ vars.APT_SERVER }}
+          APT_FTP_PORT:    ${{ vars.APT_FTP_PORT }}
+          APT_FTP_USER:    ${{ secrets.APT_FTP_USER }}
+          APT_TARGET_PATH: ${{ vars.APT_TARGET_PATH }}
+        run: |
+          lftp -c "
+            debug 3
+            set ssl:verify-certificate yes
+            set ftp:ssl-force yes
+            set ftp:ssl-protect-data yes
+            set ftp:passive-mode yes
+            set net:max-retries 1
+            set net:timeout 30s
+            open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
+            mirror --exclude '^conf/' --exclude '^db/' '$APT_TARGET_PATH/' ./apt-repo/
+            bye
+          "
+
+      - name: Add new packages to repo
+        run: |
+          # Reprepro rebuilds db/ from dists/Release on each import,
+          # so wiping db/ here gives a clean slate without losing data.
+          rm -rf ./apt-repo/db
+          mkdir -p ./apt-repo/db
+
+          export GNUPGHOME="$PWD/gnupg"
+          for codename in $CODENAMES; do
+            shopt -s nullglob
+            debs=( ./artifacts/*~${codename}*.deb )
+            shopt -u nullglob
+            if (( ${#debs[@]} == 0 )); then
+              echo "  No new packages for $codename"
+              continue
+            fi
+            echo "  Codename $codename:"
+            for deb in "${debs[@]}"; do
+              echo "    + $(basename "$deb")"
+              reprepro --basedir ./apt-repo includedeb "$codename" "$deb"
+            done
+          done
+
+      - name: Export public keyring and generate index
+        run: |
+          export GNUPGHOME="$PWD/gnupg"
+          gpg --export --armor "$GPG_KEY_ID" \
+              > ./apt-repo/blendbyte-archive-keyring.gpg.asc
+          gpg --export "$GPG_KEY_ID" \
+              > ./apt-repo/blendbyte-archive-keyring.gpg
+
+          cat > ./apt-repo/index.html <<HTMLEOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="UTF-8">
+          <title>Blendbyte nginx-modules apt repository</title>
+          <style>
+            body { font: 16px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2em auto; padding: 0 1em; color: #222; }
+            pre { background: #f4f4f4; padding: 1em; overflow-x: auto; border-radius: 4px; }
+            code { background: #f4f4f4; padding: 0 0.3em; border-radius: 2px; }
+            h1 { border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
+          </style>
+          </head>
+          <body>
+          <h1>Blendbyte nginx-modules</h1>
+          <p>Debian/Ubuntu packages of common nginx dynamic modules,
+          complementing the official <a href="https://nginx.org">nginx.org</a> repository.</p>
+          <p>Source &amp; documentation:
+          <a href="https://github.com/blendbyte/nginx-modules">github.com/blendbyte/nginx-modules</a></p>
+
+          <h2>Quick install</h2>
+          <pre>sudo install -d -m 0755 /etc/apt/keyrings
+
+          curl -fsSL https://apt.blendbyte.net/nginx/blendbyte-archive-keyring.gpg \\
+            | sudo tee /etc/apt/keyrings/blendbyte.gpg &gt;/dev/null
+
+          echo "deb [signed-by=/etc/apt/keyrings/blendbyte.gpg] https://apt.blendbyte.net/nginx \$(lsb_release -cs) main" \\
+            | sudo tee /etc/apt/sources.list.d/blendbyte.list
+
+          sudo apt update</pre>
+
+          <h2>Last updated</h2>
+          <p>$(date -u +'%Y-%m-%d %H:%M UTC')</p>
+
+          <h2>Legal</h2>
+          <p>Operated by <a href="https://www.blendbyte.com">Blendbyte</a></p>
+          </body>
+          </html>
+          HTMLEOF
+
+      - name: Show what would be uploaded (dry run)
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY_RUN set. Skipping upload."
+          echo "Local apt-repo/ tree:"
+          find ./apt-repo -maxdepth 3 -type f | head -30
+
+      # Push the merged tree back to production.
+      # --only-newer skips files reprepro didn't touch (their mtimes
+      # are preserved from the pull step).
+      # --delete removes server-side files we no longer have locally.
+      # --parallel=4 uploads four files concurrently.
+      - name: Push apt repo to production
+        if: ${{ !inputs.dry_run }}
+        env:
+          LFTP_PASSWORD:   ${{ secrets.APT_FTP_PASS }}
+          APT_SERVER:      ${{ vars.APT_SERVER }}
+          APT_FTP_PORT:    ${{ secrets.APT_FTP_PORT }}
+          APT_FTP_USER:    ${{ secrets.APT_FTP_USER }}
+          APT_TARGET_PATH: ${{ vars.APT_TARGET_PATH }}
+        run: |
+          lftp -c "
+            debug 3
+            set ssl:verify-certificate yes
+            set ftp:ssl-force yes
+            set ftp:ssl-protect-data yes
+            set ftp:passive-mode yes
+            set net:max-retries 1
+            set net:timeout 30s
+            open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
+            mirror --reverse --only-newer --delete --parallel=4 --exclude '^conf/' --exclude '^db/' ./apt-repo/ '$APT_TARGET_PATH/'
+            bye
+          "
+
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          shred -u /tmp/gpg-key.asc 2>/dev/null || rm -f /tmp/gpg-key.asc
+          rm -rf ./gnupg

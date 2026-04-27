@@ -1,0 +1,324 @@
+# modules.yaml: source of truth for blendbyte/nginx-modules
+#
+# This file defines what gets built. All downstream automation (build
+# scripts, CI workflows, package metadata) reads from here. Editing
+# this file is the canonical way to add a module, bump a version, or
+# change packaging.
+#
+# config:                    Build configuration (single section)
+#   nginx_track              "stable" or "mainline". We ship stable only
+#   debian_codenames          List of Debian releases to build for
+#   architectures             List of dpkg architectures to build for
+#   maintainer                Who appears in debian/control Maintainer field
+#   homepage                  Project URL for debian/control
+#   archive_url               Public APT URL (informational)
+#
+# modules:                   List of packages to build. One entry = one .deb.
+#                            Some upstreams produce multiple packages from
+#                            one source (brotli → filter+static, geoip2 →
+#                            http+stream); these are separate entries that
+#                            share an upstream_url.
+#
+#   name                     Debian package name
+#   description              One-line description for debian/control
+#   upstream_url             Git repository URL
+#   upstream_ref             Tag name OR "master" for branch tip.
+#                            Resolved to a commit hash by build script;
+#                            the resolved hash is recorded in the
+#                            generated .deb's debian/changelog.
+#   upstream_version         Human-readable version for the version string
+#                            (e.g. "0.39", "3.4"). Forks without releases
+#                            use a synthetic version with the upstream
+#                            commit date appended.
+#   packaging_revision       Integer; bump when packaging changes (debian/
+#                            rules, postinst, deps) without an upstream
+#                            change. Reset to 1 when upstream_version
+#                            changes.
+#   replaces                 Sury package name this replaces, or null.
+#                            Generates Replaces/Conflicts/Provides in
+#                            debian/control for seamless migration.
+#   module_so                Filename of the produced .so module
+#   nginx_context            "http" or "stream"
+#   submodules               Use --recurse-submodules on git clone
+#   build_deps               Debian build-time dependencies
+#   runtime_deps             Debian runtime dependencies
+#   load_order               Numeric prefix for the symlink in
+#                            /etc/nginx/modules-enabled/. Lower = loaded
+#                            earlier. ModSecurity uses 10 (WAF runs
+#                            before everything); most modules use 50.
+#   license                  SPDX identifier
+#   homepage                 Upstream project URL for debian/control
+#   notes                    Why we picked this fork and any quirks
+#
+# ─── Versioning ─────────────────────────────────────────────────────
+#
+# Generated package version string:
+#   {upstream_version}-{packaging_revision}+nginx{nginx_version}+blendbyte{build_serial}~{codename}
+#
+# Example: nginx-module-brotli for nginx 1.30.0 on Bookworm:
+#   1.0.0-1+nginx1.30.0+blendbyte1~bookworm
+#
+# build_serial is computed by CI from .build-serials at repo root
+# and is bumped only when re-publishing the same (module, upstream_ref,
+# packaging_revision, nginx_version, codename) combination.
+
+config:
+  nginx_track: stable
+  debian_codenames:
+    - bookworm
+    - trixie
+  architectures:
+    - amd64
+    - arm64
+  maintainer: "Blendbyte <apt@blendbyte.com>"
+  homepage: "https://github.com/blendbyte/nginx-modules"
+  archive_url: "https://apt.blendbyte.net/nginx"
+
+modules:
+
+  # ─── Compression ──────────────────────────────────────────────────
+
+  - name: nginx-module-brotli
+    description: "Brotli compression filter module for nginx"
+    upstream_url: https://github.com/nginx-modules/ngx_brotli.git
+    upstream_ref: master  # nginx-modules fork has no formal release tags
+    upstream_version: "1.0.0"  # synthetic; bump build_serial on master commits
+    packaging_revision: 1
+    replaces: libnginx-mod-http-brotli-filter
+    module_so: ngx_http_brotli_filter_module.so
+    nginx_context: http
+    submodules: true  # bundles libbrotli as a git submodule
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/nginx-modules/ngx_brotli
+    notes: |
+      google/ngx_brotli has gone effectively dormant. Last meaningful
+      commit predates 2024, and eustas/ngx_brotli (the lead's own fork)
+      was publicly archived. The nginx-modules community fork is the
+      maintained successor. Bundles libbrotli via submodule, no system
+      libbrotli dep needed.
+
+  - name: nginx-module-brotli-static
+    description: "Brotli static-precompressed-files module for nginx"
+    upstream_url: https://github.com/nginx-modules/ngx_brotli.git
+    upstream_ref: master
+    upstream_version: "1.0.0"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-brotli-static
+    module_so: ngx_http_brotli_static_module.so
+    nginx_context: http
+    submodules: true
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/nginx-modules/ngx_brotli
+    notes: |
+      Same source as nginx-module-brotli, different .so artifact.
+      Build script clones once and produces both .debs.
+
+  - name: nginx-module-zstd
+    description: "Zstandard compression filter module for nginx"
+    upstream_url: https://github.com/tokers/zstd-nginx-module.git
+    upstream_ref: "0.1.1"
+    upstream_version: "0.1.1"
+    packaging_revision: 1
+    replaces: null
+    module_so: ngx_http_zstd_filter_module.so
+    nginx_context: http
+    submodules: false
+    build_deps:
+      - libzstd-dev
+    runtime_deps:
+      - libzstd1
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/tokers/zstd-nginx-module
+    # Upstream's filter/config and static/config hardcode -l:libzstd.a
+    # (static linking). The system libzstd.a on Debian isn't built with
+    # -fPIC, so linking it into a .so fails on aarch64 with "relocation
+    # R_AARCH64_ADR_PREL_PG_HI21 ... can not be used when making a shared
+    # object". Switch to dynamic linking; libzstd1 is in runtime_deps so
+    # it'll be present at install time. (The top-level config just sources
+    # the two subconfigs, which is why patching it directly does nothing.)
+    patches:
+      - file: filter/config
+        sed: 's|-l:libzstd\.a|-lzstd|g'
+      - file: static/config
+        sed: 's|-l:libzstd\.a|-lzstd|g'
+    notes: |
+      Only viable upstream for nginx zstd compression. Module ships both
+      filter and static variants in one source tree; we package only the
+      filter for now (static can be added as a sibling entry if needed).
+
+  - name: nginx-module-modsecurity
+    description: "ModSecurity v3 connector for nginx (WAF)"
+    upstream_url: https://github.com/owasp-modsecurity/ModSecurity-nginx.git
+    upstream_ref: master
+    upstream_version: "1.0.4"
+    packaging_revision: 1
+    replaces: null
+    module_so: ngx_http_modsecurity_module.so
+    nginx_context: http
+    submodules: false
+    build_deps:
+      - libmodsecurity-dev
+    runtime_deps:
+      - libmodsecurity3
+    load_order: 10  # Load early. WAF runs before other filters
+    license: Apache-2.0
+    homepage: https://github.com/owasp-modsecurity/ModSecurity-nginx
+    notes: |
+      Just the connector. libmodsecurity3 itself comes from Debian
+      (Bookworm has 3.0.6, Trixie has 3.0.12). The project moved from
+      Trustwave SpiderLabs to OWASP in February 2024; this is the
+      canonical home now. OWASP CRS rules aren't packaged here, grab
+      those from coreruleset.org.
+
+  - name: nginx-module-geoip2
+    description: "MaxMind GeoIP2 lookup module for nginx (HTTP)"
+    upstream_url: https://github.com/leev/ngx_http_geoip2_module.git
+    upstream_ref: "3.4"
+    upstream_version: "3.4"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-geoip2
+    module_so: ngx_http_geoip2_module.so
+    nginx_context: http
+    submodules: false
+    build_deps:
+      - libmaxminddb-dev
+    runtime_deps:
+      - libmaxminddb0
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/leev/ngx_http_geoip2_module
+    notes: |
+      Original maintainer, small and stable since 2022. GeoLite2 .mmdb
+      database files aren't bundled, you'll have to grab them from
+      MaxMind directly (free signup required since 2019). Set up
+      geoipupdate to keep them fresh.
+
+  - name: nginx-module-stream-geoip2
+    description: "MaxMind GeoIP2 lookup module for nginx (Stream/TCP/UDP)"
+    upstream_url: https://github.com/leev/ngx_http_geoip2_module.git
+    upstream_ref: "3.4"
+    upstream_version: "3.4"
+    packaging_revision: 1
+    replaces: libnginx-mod-stream-geoip2
+    module_so: ngx_stream_geoip2_module.so
+    nginx_context: stream
+    submodules: false
+    build_deps:
+      - libmaxminddb-dev
+    runtime_deps:
+      - libmaxminddb0
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/leev/ngx_http_geoip2_module
+    notes: |
+      Same source as nginx-module-geoip2; stream-context variant.
+
+  - name: nginx-module-headers-more
+    description: "Set, add, and clear arbitrary output headers in nginx"
+    upstream_url: https://github.com/openresty/headers-more-nginx-module.git
+    upstream_ref: "v0.39"
+    upstream_version: "0.39"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-headers-more-filter
+    module_so: ngx_http_headers_more_filter_module.so
+    nginx_context: http
+    submodules: false
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/openresty/headers-more-nginx-module
+    notes: |
+      Active maintenance; v0.39 released 2025-07-04. OpenResty team.
+
+  - name: nginx-module-substitutions
+    description: "Regex and string substitutions in response bodies for nginx"
+    upstream_url: https://github.com/yaoweibin/ngx_http_substitutions_filter_module.git
+    upstream_ref: master
+    upstream_version: "0.6.4"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-subs-filter
+    module_so: ngx_http_subs_filter_module.so
+    nginx_context: http
+    submodules: false
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/yaoweibin/ngx_http_substitutions_filter_module
+    notes: |
+      No new releases since 0.6.4 in 2014, but the master branch is
+      maintained (PR #19 added dynamic module support in Aug 2019, plus
+      occasional fixes for newer nginx ABIs). The "nginx-modules" fork
+      that's often referenced online is actually a stale 2014 mirror
+      that doesn't have the dynamic module fix.
+
+  - name: nginx-module-cache-purge
+    description: "Purge content from FastCGI/proxy/SCGI/uWSGI caches in nginx"
+    upstream_url: https://github.com/nginx-modules/ngx_cache_purge.git
+    upstream_ref: master
+    upstream_version: "2.5.6"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-cache-purge
+    module_so: ngx_http_cache_purge_module.so
+    nginx_context: http
+    submodules: false
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/nginx-modules/ngx_cache_purge
+    notes: |
+      FRiCKLE original frozen at v2.3 (2014). nginx-modules community fork
+      carries patches needed for nginx 1.18+.
+
+  - name: nginx-module-fancyindex
+    description: "Fancy directory listing module for nginx"
+    upstream_url: https://github.com/aperezdc/ngx-fancyindex.git
+    upstream_ref: "v0.5.2"
+    upstream_version: "0.5.2"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-fancyindex
+    module_so: ngx_http_fancyindex_module.so
+    nginx_context: http
+    submodules: false
+    build_deps: []
+    runtime_deps: []
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/aperezdc/ngx-fancyindex
+    notes: |
+      Original maintainer (aperezdc) is active via master commits between
+      tagged releases. Pin to v0.5.2 tag for now; consider bumping to a
+      specific master commit if a needed fix lands.
+
+  - name: nginx-module-dav-ext
+    description: "Extended WebDAV methods (PROPFIND, OPTIONS, LOCK, UNLOCK) for nginx"
+    upstream_url: https://github.com/arut/nginx-dav-ext-module.git
+    upstream_ref: "v3.0.0"
+    upstream_version: "3.0.0"
+    packaging_revision: 1
+    replaces: libnginx-mod-http-dav-ext
+    module_so: ngx_http_dav_ext_module.so
+    nginx_context: http
+    submodules: false
+    build_deps:
+      - libxml2-dev
+      - libxslt1-dev
+    runtime_deps:
+      - libxml2
+      - libxslt1.1
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/arut/nginx-dav-ext-module
+    notes: |
+      Maintained by Roman Arutyunyan, an F5/nginx core engineer. Requires
+      nginx built with --with-http_dav_module. Official nginx.org packages
+      include this. Stable codebase, slow release cadence.

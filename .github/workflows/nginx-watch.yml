@@ -1,0 +1,87 @@
+name: nginx-watch
+
+# Polls nginx.org's stable repo daily. If a new version is detected,
+# triggers a full rebuild + publish. This is how customers get module
+# updates within ~24h of nginx publishing a new release.
+
+on:
+#  schedule:
+#    - cron: '0 6 * * *'  # 06:00 UTC daily
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  contents: read
+  actions: write  # To trigger build.yml
+
+jobs:
+  check:
+    name: check for new nginx-stable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get current nginx-stable version
+        id: latest
+        run: |
+          # Pull the Packages file from nginx.org's bookworm repo (any
+          # codename works since they all track the same upstream version)
+          PACKAGES_URL="https://nginx.org/packages/debian/dists/bookworm/nginx/binary-amd64/Packages"
+
+          LATEST=$(curl -fsSL "${PACKAGES_URL}" | \
+            awk '/^Package: nginx$/,/^$/' | \
+            awk -F': ' '/^Version:/ { print $2; exit }' | \
+            cut -d- -f1)
+
+          if [[ -z "${LATEST}" ]]; then
+            echo "ERROR: could not parse nginx version from ${PACKAGES_URL}"
+            exit 1
+          fi
+
+          echo "Latest nginx-stable: ${LATEST}"
+          echo "version=${LATEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Get last built version
+        id: last_built
+        run: |
+          # We track the last-built version as a file in the repo's
+          # gh-pages branch (or any branch you prefer). For initial
+          # setup, just always trigger.
+          if [[ -f .last-built-nginx ]]; then
+            LAST=$(cat .last-built-nginx)
+            echo "Last built: ${LAST}"
+            echo "version=${LAST}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "version=unknown" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Trigger build if new version
+        if: steps.latest.outputs.version != steps.last_built.outputs.version
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const latest = '${{ steps.latest.outputs.version }}';
+            const last = '${{ steps.last_built.outputs.version }}';
+
+            console.log(`Triggering build: nginx ${latest} (was ${last})`);
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yml',
+              ref: 'main',
+              inputs: {
+                publish: 'true'
+              }
+            });
+
+      - name: Update last-built marker
+        if: steps.latest.outputs.version != steps.last_built.outputs.version
+        run: |
+          # This is informational only. Actual versioning is in the
+          # generated .deb files. The marker just helps the watcher
+          # avoid re-triggering on the same version.
+          echo "${{ steps.latest.outputs.version }}" > .last-built-nginx
+          # In a real deployment, commit this back to the repo via a PAT,
+          # or store it as a workflow artifact, or use repository_dispatch.
+          # For now, we just log it.
+          echo "Would update .last-built-nginx to ${{ steps.latest.outputs.version }}"

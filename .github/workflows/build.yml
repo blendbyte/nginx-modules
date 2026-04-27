@@ -1,0 +1,158 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'modules.yaml'
+      - 'scripts/**'
+      - 'builders/**'
+      - '.github/workflows/build.yml'
+#  pull_request:
+#    branches: [main]
+#    paths:
+#      - 'modules.yaml'
+#      - 'scripts/**'
+#      - 'builders/**'
+#  schedule:
+#     Sunday 02:00 UTC. Catch silent breakage from upstream module changes
+#     - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      only_module:
+        description: 'Build only this module (leave blank for all)'
+        required: false
+        type: string
+      publish:
+        description: 'Publish artifacts after successful build'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-refs:
+    name: resolve upstream refs
+    runs-on: ubuntu-latest
+    outputs:
+      refs-sha: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install yq and jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends jq
+          sudo curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.45.1/yq_linux_amd64 \
+              -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Resolve refs
+        run: ./scripts/resolve-refs.sh
+
+      - name: Upload resolved refs
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          include-hidden-files: true
+          name: resolved-refs
+          path: .resolved-refs.yaml
+          retention-days: 7
+
+  build:
+    name: build (${{ matrix.codename }} / ${{ matrix.arch }})
+    needs: resolve-refs
+    strategy:
+      fail-fast: false
+      matrix:
+        codename: [bookworm, trixie]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download resolved refs
+        uses: actions/download-artifact@v8
+        with:
+          name: resolved-refs
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build builder image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: builders/${{ matrix.codename }}.Dockerfile
+          tags: blendbyte/nginx-modules-builder:${{ matrix.codename }}-${{ matrix.arch }}
+          load: true
+          cache-from: type=gha,scope=builder-${{ matrix.codename }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=builder-${{ matrix.codename }}-${{ matrix.arch }}
+          platforms: linux/${{ matrix.arch }}
+
+      - name: Build module packages
+        run: |
+          # Create the artifacts directory with permissive mode so the
+          # container's unprivileged builder user (UID 1000) can write
+          # to it. Without this, mv inside the container fails with
+          # permission denied because the host runner user (UID 1001)
+          # owns the directory with default 0755 perms.
+          mkdir -p ./artifacts
+          chmod 0777 ./artifacts
+          docker run --rm \
+            --platform linux/${{ matrix.arch }} \
+            -v "${PWD}:/workspace:ro" \
+            -v "${PWD}/artifacts:/artifacts" \
+            -e ARCH=${{ matrix.arch }} \
+            -e BUILD_SERIAL=${{ github.run_number }} \
+            -e ONLY_MODULE='${{ inputs.only_module }}' \
+            blendbyte/nginx-modules-builder:${{ matrix.codename }}-${{ matrix.arch }} \
+            -c '/workspace/scripts/build.sh'
+
+      - name: List artifacts
+        run: ls -la ./artifacts/
+
+      - name: Verify packages
+        run: ./scripts/verify.sh ${{ matrix.codename }} ${{ matrix.arch }} ./artifacts
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: debs-${{ matrix.codename }}-${{ matrix.arch }}
+          path: ./artifacts/*.deb
+          retention-days: 30
+          if-no-files-found: error
+
+  trigger-publish:
+    name: trigger publish
+    needs: build
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish == true) ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      # Needed to call createWorkflowDispatch on release.yml. The
+      # workflow-level permissions block only grants contents: read.
+      actions: write
+    steps:
+      - name: Trigger release workflow
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release.yml',
+              ref: context.ref,
+              inputs: {
+                build_run_id: '${{ github.run_id }}'
+              }
+            });
