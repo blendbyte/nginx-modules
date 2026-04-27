@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: mailto:security@blendbyte.net
+    about: Please email us instead of opening a public issue. See SECURITY.md for details.
+  - name: Support / general questions
+    url: https://github.com/blendbyte/nginx-modules/discussions
+    about: Not a bug, just need help? Use discussions or Stack Overflow.

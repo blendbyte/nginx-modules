@@ -1,0 +1,46 @@
+name: Version bump
+description: An upstream module shipped a new release and we should track it.
+labels: ["version-bump"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you maintain this module, great -- go ahead and open a PR directly. This issue template is for flagging a new upstream release when you don't have time to do the bump yourself.
+
+  - type: input
+    id: module
+    attributes:
+      label: Module
+      placeholder: "nginx-module-brotli"
+    validations:
+      required: true
+
+  - type: input
+    id: current
+    attributes:
+      label: Current version in this repo
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: new
+    attributes:
+      label: New upstream version
+      placeholder: "1.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: upstream_link
+    attributes:
+      label: Link to upstream release or changelog
+      placeholder: "https://github.com/upstream/module/releases/tag/v1.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything worth calling out
+      description: Breaking changes, new dependencies, anything the maintainer should know before bumping.

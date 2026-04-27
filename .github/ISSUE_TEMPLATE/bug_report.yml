@@ -1,0 +1,54 @@
+name: Bug report
+description: Something's broken in our packaging or build. Not a support request for your server setup.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: this is for bugs in **our packaging** (bad postinst, wrong dependency, module fails to load). If the bug is in the upstream module itself, please report it to the upstream project instead.
+
+  - type: input
+    id: package
+    attributes:
+      label: Package and version
+      description: Run `apt-cache policy nginx-module-X` and paste the installed version.
+      placeholder: "nginx-module-brotli 1.0.0-1+nginx1.30.0+blendbyte1~bookworm"
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Distro and architecture
+      description: Bookworm or Trixie, amd64 or arm64.
+      placeholder: "Debian 12 Bookworm, amd64"
+    validations:
+      required: true
+
+  - type: input
+    id: nginx
+    attributes:
+      label: nginx version
+      description: Run `nginx -v`.
+      placeholder: "nginx/1.30.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: What's broken
+      description: What happened, what you expected, and a minimal reproducer. Issues without a reproducer get closed.
+      placeholder: |
+        What I did:
+        What I expected:
+        What actually happened:
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: nginx error log, apt output, whatever's useful.
+      render: shell

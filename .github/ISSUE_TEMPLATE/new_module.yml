@@ -1,0 +1,59 @@
+name: New module proposal
+description: You want to add a module and you're willing to maintain it. Both parts matter.
+labels: ["new-module"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We only add modules with a maintainer attached. If you're opening this issue to ask us to add something without volunteering to maintain it, it'll get closed. No hard feelings, it's just how a small project stays manageable.
+
+        Read the contributing section in the README before filling this out.
+
+  - type: input
+    id: module
+    attributes:
+      label: Module name and upstream repo
+      placeholder: "ngx_foo -- https://github.com/someone/ngx_foo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Why it belongs here
+      description: |
+        Walk through the criteria from the README. We use it in production, nginx core doesn't do it, upstream is alive, the codebase is auditable, ABI is stable across nginx releases. Pre-empt the "why not use X instead" question.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sury
+    attributes:
+      label: Does it replace a sury package?
+      description: If yes, which one? If no, just say so.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: commitment
+    attributes:
+      label: Maintainer commitment
+      description: By checking these you're signing up to actually do the thing.
+      options:
+        - label: I will review version bump PRs for this module within two weeks
+          required: true
+        - label: I will look at build failures specific to this module within one week of CI going red
+          required: true
+        - label: I will respond to upstream security advisories within one week
+          required: true
+        - label: If I can no longer maintain it, I will open a PR to remove myself (and the module gets pulled if nobody steps up)
+          required: true
+
+  - type: input
+    id: maintainer
+    attributes:
+      label: Your GitHub handle
+      description: So we know who to ping.
+      placeholder: "@you"
+    validations:
+      required: true
