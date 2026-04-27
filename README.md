@@ -163,3 +163,32 @@ Found something? Email `security@blendbyte.net`. Full policy, response timelines
 ## License
 
 Build scripts, CI, packaging, and docs in this repo are [BSD-2-Clause](LICENSE). Each compiled module keeps its own upstream license -- see the package's `debian/copyright`.
+
+## Maintained by Blendbyte
+
+<br>
+
+<p align="center">
+  <a href="https://www.blendbyte.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://www.blendbyte.com/logo_horizontal_light.png">
+      <img src="https://www.blendbyte.com/logo_horizontal.png" alt="Blendbyte" width="360">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <strong><a href="https://www.blendbyte.com">Blendbyte</a></strong> builds cloud infrastructure, web apps, and developer tools.<br>
+  We've been shipping software to production for 20+ years.
+</p>
+
+<p align="center">
+  This package runs in our own stack, which is why we keep it maintained.<br>
+  Issues and PRs get read. Good ones get merged.
+</p>
+
+<br>
+
+<p align="center">
+  <a href="https://www.blendbyte.com">blendbyte.com</a> · <a href="mailto:hello@blendbyte.com">hello@blendbyte.com</a>
+</p>
