@@ -16,9 +16,14 @@
 
 set -euo pipefail
 
-CODENAME="${1:?codename required (bookworm or trixie)}"
+CODENAME="${1:?codename required}"
 ARCH="${2:?architecture required (amd64 or arm64)}"
 ARTIFACTS_DIR="${3:?artifacts directory required}"
+
+case "$CODENAME" in
+    jammy|noble|resolute) DISTRO=ubuntu; BASE_IMAGE="ubuntu:${CODENAME}" ;;
+    *)                    DISTRO=debian; BASE_IMAGE="debian:${CODENAME}-slim" ;;
+esac
 
 if [[ ! -d "${ARTIFACTS_DIR}" ]]; then
     echo "ERROR: artifacts directory not found: ${ARTIFACTS_DIR}" >&2
@@ -31,14 +36,18 @@ if [[ "${DEB_COUNT}" -eq 0 ]]; then
     exit 1
 fi
 
-echo "Verifying ${DEB_COUNT} packages on debian:${CODENAME} (${ARCH})..."
+echo "Verifying ${DEB_COUNT} packages on ${BASE_IMAGE} (${ARCH})..."
 
 # Run verification inside a clean container, same base as the builder
-# but without our build tools, to mimic a real user install
+# but without our build tools, to mimic a real user install.
+# DISTRO is passed as an env var so the single-quoted inline script can
+# use it to select the correct nginx.org repo path (packages/debian vs
+# packages/ubuntu) without requiring double-quote escaping throughout.
 docker run --rm \
     --platform "linux/${ARCH}" \
     -v "${ARTIFACTS_DIR}:/debs:ro" \
-    "debian:${CODENAME}-slim" \
+    -e DISTRO="${DISTRO}" \
+    "${BASE_IMAGE}" \
     bash -c '
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
@@ -51,7 +60,7 @@ docker run --rm \
         install -d -m 0755 /etc/apt/keyrings
         curl -fsSL https://nginx.org/keys/nginx_signing.key \
             | gpg --dearmor > /etc/apt/keyrings/nginx.gpg
-        echo "deb [signed-by=/etc/apt/keyrings/nginx.gpg] https://nginx.org/packages/debian $(lsb_release -cs) nginx" \
+        echo "deb [signed-by=/etc/apt/keyrings/nginx.gpg] https://nginx.org/packages/${DISTRO} $(lsb_release -cs) nginx" \
             > /etc/apt/sources.list.d/nginx.list
         apt-get update -qq
         apt-get install -y --no-install-recommends nginx > /dev/null

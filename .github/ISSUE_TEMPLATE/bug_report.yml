@@ -20,8 +20,8 @@ body:
     id: distro
     attributes:
       label: Distro and architecture
-      description: Bookworm or Trixie, amd64 or arm64.
-      placeholder: "Debian 12 Bookworm, amd64"
+      description: "Distro and version (e.g. Debian Bookworm, Ubuntu 24.04 Noble), amd64 or arm64."
+      placeholder: "Ubuntu 24.04 Noble, amd64"
     validations:
       required: true
 

@@ -1,6 +1,8 @@
 # nginx-modules
 
-Debian packages of nginx dynamic modules for Debian Bookworm and Trixie. Built against the official [nginx.org](https://nginx.org) stable releases. Free to use.
+Debian and Ubuntu packages of nginx dynamic modules. Built against the official [nginx.org](https://nginx.org) stable releases. Free to use.
+
+**Supported distros:** Debian Bookworm, Debian Trixie, Ubuntu 22.04 LTS (Jammy), Ubuntu 24.04 LTS (Noble), Ubuntu 26.04 LTS (Resolute Raccoon). amd64 and arm64.
 
 > **We only provide modules, not nginx itself.** You need the official nginx.org repo installed first. This repo sits alongside it -- apt treats them as one source.
 
@@ -10,7 +12,7 @@ We run a lot of nginx at Blendbyte. We need brotli, geoip2, headers-more, and a 
 
 You probably want this if you were on sury and need somewhere to go, or if you want prebuilt modules that stay current without compiling anything yourself.
 
-You probably don't want this if you're on Ubuntu (might work, not tested), need a module we don't ship, or need an SLA (try [GetPageSpeed](https://www.getpagespeed.com/) or [NGINX Plus](https://www.nginx.com/products/nginx/)).
+You probably don't want this if you need a module we don't ship, or need an SLA (try [GetPageSpeed](https://www.getpagespeed.com/) or [NGINX Plus](https://www.nginx.com/products/nginx/)).
 
 
 ## Quick start
@@ -150,7 +152,7 @@ PRs are welcome. Bug fixes, build improvements, version bumps, and docs are all 
 
 To add a module:
 1. Open a PR adding it to `modules.yaml` (schema is documented at the top of that file)
-2. Make sure all four CI jobs pass (Bookworm + Trixie, amd64 + arm64)
+2. Make sure all ten CI jobs pass (Bookworm, Trixie, Jammy, Noble, Resolute × amd64 + arm64)
 3. Add yourself as maintainer in `modules.yaml`
 4. Update the sury migration table above if it replaces a sury package
 

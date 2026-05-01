@@ -163,11 +163,6 @@ echo "  $mod_count modules pass validation."
 echo
 
 # ─── Per-module build function ──────────────────────────────────────
-#
-# Returns 0 on success, non-zero on failure.
-# Caller wraps in "if ! build_module ...; then" to capture failures
-# without aborting the whole run.
-#
 build_module() {
     local idx="$1"
 
@@ -316,7 +311,7 @@ $name ($version) $CODENAME; urgency=medium
 
   * Built from $url
     ref: $ref  ->  commit $commit
-  * For nginx $NGINX_VERSION on Debian $CODENAME $ARCH
+  * For nginx $NGINX_VERSION on $CODENAME $ARCH
 
  -- Blendbyte <apt@blendbyte.com>  $now
 EOF
@@ -407,7 +402,7 @@ if [ "\$1" = "configure" ]; then
         ln -sf /etc/nginx/modules-available/$snippet_name \\
             /etc/nginx/modules-enabled/$snippet_name
     fi
-    if systemctl is-active --quiet nginx; then
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
         nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
     fi
 fi
@@ -460,7 +455,6 @@ EOF
 }
 
 # ─── Main loop ──────────────────────────────────────────────────────
-declare -a failures=()
 declare -a built=()
 
 for ((i=0; i<mod_count; i++)); do
@@ -470,29 +464,16 @@ for ((i=0; i<mod_count; i++)); do
         continue
     fi
 
-    if build_module "$i"; then
-        built+=("$name")
-    else
-        failures+=("$name")
-    fi
+    # Call directly (not inside `if`) so set -euo pipefail applies inside
+    # build_module. Calling a function as the condition of an `if` disables
+    # errexit for the entire function body, letting silent failures slip through.
+    build_module "$i"
+    built+=("$name")
 done
 
 # ─── Summary ────────────────────────────────────────────────────────
 echo
 echo "============================================================"
-if [[ ${#failures[@]} -eq 0 ]]; then
-    echo "Build complete. ${#built[@]} package(s) in $ARTIFACTS_DIR:"
-    ls -la "$ARTIFACTS_DIR"/*.deb 2>/dev/null || echo "  (none)"
-    echo "============================================================"
-    exit 0
-else
-    echo "Build had ${#failures[@]} failure(s):"
-    printf '  - %s\n' "${failures[@]}"
-    if [[ ${#built[@]} -gt 0 ]]; then
-        echo
-        echo "Successful builds (${#built[@]}):"
-        printf '  - %s\n' "${built[@]}"
-    fi
-    echo "============================================================"
-    exit 1
-fi
+echo "Build complete. ${#built[@]} package(s) in $ARTIFACTS_DIR:"
+ls -la "$ARTIFACTS_DIR"/*.deb 2>/dev/null || echo "  (none)"
+echo "============================================================"

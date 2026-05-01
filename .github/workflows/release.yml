@@ -27,7 +27,7 @@ jobs:
       # information; only the private key material itself is sensitive.
       GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       # Codenames we publish for. Must match what build.yml produces.
-      CODENAMES: bookworm trixie
+      CODENAMES: bookworm trixie jammy noble resolute
     steps:
       - uses: actions/checkout@v6
 
