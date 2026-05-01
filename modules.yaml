@@ -67,6 +67,10 @@ config:
   debian_codenames:
     - bookworm
     - trixie
+  ubuntu_codenames:
+    - jammy
+    - noble
+    - resolute
   architectures:
     - amd64
     - arm64
@@ -312,9 +316,7 @@ modules:
     build_deps:
       - libxml2-dev
       - libxslt1-dev
-    runtime_deps:
-      - libxml2
-      - libxslt1.1
+    runtime_deps: []
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/arut/nginx-dav-ext-module

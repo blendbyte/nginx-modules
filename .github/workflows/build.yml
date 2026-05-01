@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        codename: [bookworm, trixie]
+        codename: [bookworm, trixie, jammy, noble, resolute]
         arch: [amd64, arm64]
         include:
           - arch: amd64
