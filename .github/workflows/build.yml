@@ -1,13 +1,13 @@
 name: build
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'modules.yaml'
-      - 'scripts/**'
-      - 'builders/**'
-      - '.github/workflows/build.yml'
+#  push:
+#    branches: [main]
+#    paths:
+#      - 'modules.yaml'
+#      - 'scripts/**'
+#      - 'builders/**'
+#      - '.github/workflows/build.yml'
 #  pull_request:
 #    branches: [main]
 #    paths:
