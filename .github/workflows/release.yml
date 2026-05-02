@@ -185,6 +185,13 @@ jobs:
           </html>
           HTMLEOF
 
+      - name: Write status.txt
+        run: |
+          nginx_version=$(ls ./artifacts/*.deb | head -1 \
+            | grep -oP '(?<=\+nginx)[0-9]+\.[0-9]+\.[0-9]+')
+          echo "nginx ${nginx_version} / last built on $(date -u +'%Y-%m-%d')" \
+            > ./apt-repo/status.txt
+
       - name: Show what would be uploaded (dry run)
         if: ${{ inputs.dry_run }}
         run: |
