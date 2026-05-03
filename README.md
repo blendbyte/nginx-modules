@@ -1,8 +1,23 @@
 # nginx-modules
 
-Debian and Ubuntu packages of nginx dynamic modules, built against the official [nginx.org](https://nginx.org) stable releases.
+Debian and Ubuntu packages of nginx dynamic modules, built against the official [nginx.org](https://nginx.org) stable releases. Supports Debian Bookworm/Trixie and Ubuntu 22.04/24.04/26.04 on amd64 and arm64.
 
-**Docs, install instructions, and module list:** [nginx-modules.com](https://www.nginx-modules.com)
+Requires nginx from [nginx.org](https://nginx.org/en/linux_packages.html) -- not the version in Debian/Ubuntu's default repos.
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+
+curl -fsSL https://apt.blendbyte.net/nginx/blendbyte-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/blendbyte.gpg >/dev/null
+
+echo "deb [signed-by=/etc/apt/keyrings/blendbyte.gpg] https://apt.blendbyte.net/nginx $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/blendbyte.list
+
+sudo apt update
+sudo apt install nginx-module-brotli nginx-module-geoip2 nginx-module-headers-more
+```
+
+For the full module list, migration from Sury, and more: [nginx-modules.com](https://www.nginx-modules.com)
 
 ## Contributing
 
