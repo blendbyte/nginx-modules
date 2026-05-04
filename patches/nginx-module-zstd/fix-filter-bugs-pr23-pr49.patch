@@ -1,0 +1,62 @@
+diff --git a/filter/ngx_http_zstd_filter_module.c b/filter/ngx_http_zstd_filter_module.c
+index 50ec55f..2ff5ed9 100644
+--- a/filter/ngx_http_zstd_filter_module.c
++++ b/filter/ngx_http_zstd_filter_module.c
+@@ -440,6 +440,8 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
+     ctx->out_buf->last += ctx->buffer_out.pos - pos_out;
+     ctx->redo = 0;
+ 
++    unsigned last_action = ctx->action;
++
+     if (rc > 0) {
+         if (ctx->action == NGX_HTTP_ZSTD_FILTER_COMPRESS) {
+             ctx->action = NGX_HTTP_ZSTD_FILTER_FLUSH;
+@@ -447,7 +449,12 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
+ 
+         ctx->redo = 1;
+ 
+-    } else if (ctx->last && ctx->action != NGX_HTTP_ZSTD_FILTER_END) {
++    } else if (ctx->last && ctx->action != NGX_HTTP_ZSTD_FILTER_END
++               && ctx->buffer_in.pos >= ctx->buffer_in.size
++               && ctx->in == NULL)
++    {
++        /* only transition to END once inBuffer is drained and no chain links
++         * remain; guards against >131072-byte truncation (issue #25). */
+         ctx->redo = 1;
+         ctx->action = NGX_HTTP_ZSTD_FILTER_END;
+ 
+@@ -455,11 +462,12 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
+ 
+         return NGX_AGAIN;
+ 
+-    } else {
++    } else if (ctx->action != NGX_HTTP_ZSTD_FILTER_END) {
++        /* preserve END state after ZSTD_endStream so done-flag gate fires */
+         ctx->action = NGX_HTTP_ZSTD_FILTER_COMPRESS; /* restore */
+     }
+ 
+-    if (ngx_buf_size(ctx->out_buf) == 0) {
++    if (ngx_buf_size(ctx->out_buf) == 0 && last_action != NGX_HTTP_ZSTD_FILTER_FLUSH) {
+         return NGX_AGAIN;
+     }
+ 
+@@ -469,8 +477,18 @@ ngx_http_zstd_filter_compress(ngx_http_request_t *r, ngx_http_zstd_ctx_t *ctx)
+     }
+ 
+     b = ctx->out_buf;
++    if (ngx_buf_size(b) == 0) {
++        b = ngx_calloc_buf(ctx->request->pool);
++        if (b == NULL) {
++            return NGX_ERROR;
++        }
++    }
+ 
+-    if (rc == 0 && (ctx->flush || ctx->last)) {
++    /* only mark done once ZSTD_endStream has run (pr#49) */
++    if (rc == 0
++        && (ctx->flush
++            || (ctx->last && ctx->action == NGX_HTTP_ZSTD_FILTER_END)))
++    {
+         r->connection->buffered &= ~NGX_HTTP_GZIP_BUFFERED;
+ 
+         b->flush = ctx->flush;

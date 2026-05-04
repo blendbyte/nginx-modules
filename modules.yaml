@@ -128,7 +128,7 @@ modules:
     upstream_url: https://github.com/tokers/zstd-nginx-module.git
     upstream_ref: "0.1.1"
     upstream_version: "0.1.1"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: null
     module_so: ngx_http_zstd_filter_module.so
     nginx_context: http
@@ -140,22 +140,30 @@ modules:
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/tokers/zstd-nginx-module
-    # Upstream's filter/config and static/config hardcode -l:libzstd.a
-    # (static linking). The system libzstd.a on Debian isn't built with
-    # -fPIC, so linking it into a .so fails on aarch64 with "relocation
-    # R_AARCH64_ADR_PREL_PG_HI21 ... can not be used when making a shared
-    # object". Switch to dynamic linking; libzstd1 is in runtime_deps so
-    # it'll be present at install time. (The top-level config just sources
-    # the two subconfigs, which is why patching it directly does nothing.)
+    # Patch notes:
+    # - sed: filter/config and static/config hardcode -l:libzstd.a (static
+    #   linking). The system libzstd.a on Debian isn't built with -fPIC, so
+    #   linking it into a .so fails on aarch64 ("relocation R_AARCH64_ADR_PREL
+    #   _PG_HI21 ... can not be used when making a shared object"). Switch to
+    #   dynamic linking; libzstd1 is in runtime_deps. (The top-level config
+    #   just sources the two subconfigs, so patching it directly does nothing.)
+    # - fix-filter-bugs-pr23-pr49.patch: two unmerged upstream bug fixes:
+    #   PR#23 infinite loop when upstream sends Content-Length > actual body;
+    #   PR#49 silent truncation of responses > 131072 bytes (ZSTD_CStreamInSize)
+    #   due to premature last_buf=1 before ZSTD_endStream has run.
+    # - fix-brotli-ordering-pr44.patch: run zstd before brotli when both are
+    #   loaded (combined with the module-order fix from master commit f4ba115e,
+    #   never tagged). Without this, clients that support both always get brotli.
     patches:
       - file: filter/config
         sed: 's|-l:libzstd\.a|-lzstd|g'
       - file: static/config
         sed: 's|-l:libzstd\.a|-lzstd|g'
+      - patch: patches/nginx-module-zstd/fix-filter-bugs-pr23-pr49.patch
+      - patch: patches/nginx-module-zstd/fix-brotli-ordering-pr44.patch
     notes: |
-      Only viable upstream for nginx zstd compression. Module ships both
-      filter and static variants in one source tree; we package only the
-      filter for now (static can be added as a sibling entry if needed).
+      Upstream (tokers/zstd-nginx-module) is lightly maintained; critical bug
+      fixes are applied as patches from unmerged PRs. See patch comments above.
 
   - name: nginx-module-modsecurity
     description: "ModSecurity v3 connector for nginx (WAF)"

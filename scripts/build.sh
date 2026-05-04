@@ -240,21 +240,38 @@ EOF
     local patches_count
     patches_count="$(jq -r ".[$idx].patches // [] | length" "$MODULES_JSON")"
     if [[ "$patches_count" -gt 0 ]]; then
-        local p patch_file patch_sed full_path
+        local p patch_dot_patch patch_file patch_sed full_path full_patch
         for ((p=0; p<patches_count; p++)); do
+            patch_dot_patch="$(jq -r ".[$idx].patches[$p].patch // empty" "$MODULES_JSON")"
             patch_file="$(jq -r ".[$idx].patches[$p].file // empty" "$MODULES_JSON")"
             patch_sed="$(jq -r ".[$idx].patches[$p].sed // empty" "$MODULES_JSON")"
-            if [[ -z "$patch_file" || -z "$patch_sed" ]]; then
-                echo "  ERROR: $name patch #$p missing 'file' or 'sed'" >&2
+
+            if [[ -n "$patch_dot_patch" ]]; then
+                # .patch file: apply with git apply inside the upstream clone
+                if [[ "$patch_dot_patch" == *..* ]]; then
+                    echo "  ERROR: $name patch #$p path must not contain '..': $patch_dot_patch" >&2
+                    return 1
+                fi
+                full_patch="$REPO_ROOT/$patch_dot_patch"
+                if [[ ! -f "$full_patch" ]]; then
+                    echo "  ERROR: $name patch #$p file not found: $patch_dot_patch" >&2
+                    return 1
+                fi
+                echo "  Patch: $patch_dot_patch"
+                git -C "$upstream_dir" apply --whitespace=nowarn "$full_patch"
+            elif [[ -n "$patch_file" && -n "$patch_sed" ]]; then
+                # sed patch: in-place substitution on a specific file
+                full_path="$upstream_dir/$patch_file"
+                if [[ ! -f "$full_path" ]]; then
+                    echo "  ERROR: $name patch #$p targets missing file: $patch_file" >&2
+                    return 1
+                fi
+                echo "  Patch: $patch_file <- $patch_sed"
+                sed -i "$patch_sed" "$full_path"
+            else
+                echo "  ERROR: $name patch #$p must have 'patch' or both 'file' and 'sed'" >&2
                 return 1
             fi
-            full_path="$upstream_dir/$patch_file"
-            if [[ ! -f "$full_path" ]]; then
-                echo "  ERROR: $name patch #$p targets missing file: $patch_file" >&2
-                return 1
-            fi
-            echo "  Patch: $patch_file <- $patch_sed"
-            sed -i "$patch_sed" "$full_path"
         done
     fi
 
