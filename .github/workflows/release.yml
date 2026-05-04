@@ -83,14 +83,12 @@ jobs:
           basedir $PWD/apt-repo
           EOF
 
-      # Pull existing repo state from the FTPS server. Without this,
-      # every publish would overwrite the server with only the .debs
-      # from the current run, losing all historical packages.
+      # Pull only db/ and dists/ from the server — not pool/.
+      # reprepro uses db/ as its source of truth for which packages are
+      # already registered, so it doesn't need the actual .deb files.
+      # Skipping pool/ avoids downloading all historical packages on every run.
       #
-      # continue-on-error is set because on the very first publish the
-      # target directory may not exist yet on the server. Subsequent
-      # runs will pull successfully. debug 3 in the lftp script shows
-      # the FTP protocol exchange in the workflow log if anything fails.
+      # continue-on-error: first publish has nothing to pull yet.
       - name: Pull existing apt repo state
         if: ${{ !inputs.dry_run }}
         continue-on-error: true
@@ -110,15 +108,12 @@ jobs:
             set net:max-retries 1
             set net:timeout 30s
             open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
-            mirror --exclude '^conf/' --exclude '^db/' '$APT_TARGET_PATH/' ./apt-repo/
+            mirror --exclude '^conf/' --exclude '^pool/' '$APT_TARGET_PATH/' ./apt-repo/
             bye
           "
 
       - name: Add new packages to repo
         run: |
-          # Reprepro rebuilds db/ from dists/Release on each import,
-          # so wiping db/ here gives a clean slate without losing data.
-          rm -rf ./apt-repo/db
           mkdir -p ./apt-repo/db
 
           export GNUPGHOME="$PWD/gnupg"
@@ -199,11 +194,9 @@ jobs:
           echo "Local apt-repo/ tree:"
           find ./apt-repo -maxdepth 3 -type f | head -30
 
-      # Push the merged tree back to production.
-      # --only-newer skips files reprepro didn't touch (their mtimes
-      # are preserved from the pull step).
-      # --delete removes server-side files we no longer have locally.
-      # --parallel=4 uploads four files concurrently.
+      # Push back to production. --only-newer skips unchanged files (mtimes
+      # preserved from pull). No --delete: pool/ wasn't pulled, so historical
+      # .debs on the server stay untouched. --parallel=4 for throughput.
       - name: Push apt repo to production
         if: ${{ !inputs.dry_run }}
         env:
@@ -222,7 +215,7 @@ jobs:
             set net:max-retries 1
             set net:timeout 30s
             open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
-            mirror --reverse --only-newer --delete --parallel=4 --exclude '^conf/' --exclude '^db/' ./apt-repo/ '$APT_TARGET_PATH/'
+            mirror --reverse --only-newer --parallel=4 --exclude '^conf/' ./apt-repo/ '$APT_TARGET_PATH/'
             bye
           "
 
