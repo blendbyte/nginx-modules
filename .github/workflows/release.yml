@@ -28,13 +28,19 @@ jobs:
       GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       # Codenames we publish for. Must match what build.yml produces.
       CODENAMES: bookworm trixie jammy noble resolute
+      # S3-compatible object storage credentials (follows OpenBao convention).
+      AWS_ACCESS_KEY_ID:     ${{ secrets.PKG_S3_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.PKG_S3_SECRET }}
+      AWS_REGION:            ${{ vars.PKG_S3_REGION }}
+      AWS_ENDPOINT_URL:      ${{ secrets.PKG_S3_ENDPOINT_URL }}
+      BUCKET:                ${{ secrets.PKG_S3_BUCKET_NAME }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install reprepro, gnupg, and lftp
+      - name: Install reprepro and gnupg
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends reprepro gnupg lftp
+          sudo apt-get install -y --no-install-recommends reprepro gnupg
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
@@ -83,34 +89,16 @@ jobs:
           basedir $PWD/apt-repo
           EOF
 
-      # Pull only db/ and dists/ from the server — not pool/.
+      # Pull db/ and dists/ from S3 — not pool/.
       # reprepro uses db/ as its source of truth for which packages are
       # already registered, so it doesn't need the actual .deb files.
       # Skipping pool/ avoids downloading all historical packages on every run.
-      #
-      # continue-on-error: first publish has nothing to pull yet.
+      # On first publish the bucket prefix is empty so the sync is a no-op.
       - name: Pull existing apt repo state
         if: ${{ !inputs.dry_run }}
-        continue-on-error: true
-        env:
-          LFTP_PASSWORD:   ${{ secrets.APT_FTP_PASS }}
-          APT_SERVER:      ${{ vars.APT_SERVER }}
-          APT_FTP_PORT:    ${{ vars.APT_FTP_PORT }}
-          APT_FTP_USER:    ${{ secrets.APT_FTP_USER }}
-          APT_TARGET_PATH: ${{ vars.APT_TARGET_PATH }}
         run: |
-          lftp -c "
-            debug 3
-            set ssl:verify-certificate yes
-            set ftp:ssl-force yes
-            set ftp:ssl-protect-data yes
-            set ftp:passive-mode yes
-            set net:max-retries 1
-            set net:timeout 30s
-            open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
-            mirror --exclude '^conf/' --exclude '^pool/' '$APT_TARGET_PATH/' ./apt-repo/
-            bye
-          "
+          aws s3 sync "s3://${BUCKET}/db/"    ./apt-repo/db/
+          aws s3 sync "s3://${BUCKET}/dists/" ./apt-repo/dists/
 
       - name: Add new packages to repo
         run: |
@@ -132,7 +120,7 @@ jobs:
             done
           done
 
-      - name: Export public keyring and generate index
+      - name: Export public keyring
         run: |
           export GNUPGHOME="$PWD/gnupg"
           gpg --export --armor "$GPG_KEY_ID" \
@@ -154,30 +142,13 @@ jobs:
           echo "Local apt-repo/ tree:"
           find ./apt-repo -maxdepth 3 -type f | head -30
 
-      # Push back to production. --only-newer skips unchanged files (mtimes
-      # preserved from pull). No --delete: pool/ wasn't pulled, so historical
-      # .debs on the server stay untouched. --parallel=4 for throughput.
+      # Push back to S3. aws s3 sync without --delete preserves existing
+      # pool/ packages already in the bucket. conf/ is excluded because it
+      # is dynamically generated on each run and not needed by apt clients.
       - name: Push apt repo to production
         if: ${{ !inputs.dry_run }}
-        env:
-          LFTP_PASSWORD:   ${{ secrets.APT_FTP_PASS }}
-          APT_SERVER:      ${{ vars.APT_SERVER }}
-          APT_FTP_PORT:    ${{ secrets.APT_FTP_PORT }}
-          APT_FTP_USER:    ${{ secrets.APT_FTP_USER }}
-          APT_TARGET_PATH: ${{ vars.APT_TARGET_PATH }}
         run: |
-          lftp -c "
-            debug 3
-            set ssl:verify-certificate yes
-            set ftp:ssl-force yes
-            set ftp:ssl-protect-data yes
-            set ftp:passive-mode yes
-            set net:max-retries 1
-            set net:timeout 30s
-            open --env-password -u '$APT_FTP_USER' 'ftp://$APT_SERVER:$APT_FTP_PORT'
-            mirror --reverse --only-newer --parallel=4 --exclude '^conf/' ./apt-repo/ '$APT_TARGET_PATH/'
-            bye
-          "
+          aws s3 sync ./apt-repo/ "s3://${BUCKET}/" --exclude 'conf/*'
 
       - name: Cleanup secrets
         if: always()
