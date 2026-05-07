@@ -140,46 +140,6 @@ jobs:
           gpg --export "$GPG_KEY_ID" \
               > ./apt-repo/blendbyte-archive-keyring.gpg
 
-          cat > ./apt-repo/index.html <<HTMLEOF
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-          <meta charset="UTF-8">
-          <title>Blendbyte nginx-modules apt repository</title>
-          <style>
-            body { font: 16px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2em auto; padding: 0 1em; color: #222; }
-            pre { background: #f4f4f4; padding: 1em; overflow-x: auto; border-radius: 4px; }
-            code { background: #f4f4f4; padding: 0 0.3em; border-radius: 2px; }
-            h1 { border-bottom: 1px solid #eee; padding-bottom: 0.3em; }
-          </style>
-          </head>
-          <body>
-          <h1>Blendbyte nginx-modules</h1>
-          <p>Debian/Ubuntu packages of common nginx dynamic modules,
-          complementing the official <a href="https://nginx.org">nginx.org</a> repository.</p>
-          <p>Source &amp; documentation:
-          <a href="https://github.com/blendbyte/nginx-modules">github.com/blendbyte/nginx-modules</a></p>
-
-          <h2>Quick install</h2>
-          <pre>sudo install -d -m 0755 /etc/apt/keyrings
-
-          curl -fsSL https://apt.blendbyte.net/nginx/blendbyte-archive-keyring.gpg \\
-            | sudo tee /etc/apt/keyrings/blendbyte.gpg &gt;/dev/null
-
-          echo "deb [signed-by=/etc/apt/keyrings/blendbyte.gpg] https://apt.blendbyte.net/nginx \$(lsb_release -cs) main" \\
-            | sudo tee /etc/apt/sources.list.d/blendbyte.list
-
-          sudo apt update</pre>
-
-          <h2>Last updated</h2>
-          <p>$(date -u +'%Y-%m-%d %H:%M UTC')</p>
-
-          <h2>Legal</h2>
-          <p>Operated by <a href="https://www.blendbyte.com">Blendbyte</a></p>
-          </body>
-          </html>
-          HTMLEOF
-
       - name: Write status.txt
         run: |
           nginx_version=$(ls ./artifacts/*.deb | head -1 \
