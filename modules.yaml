@@ -200,6 +200,34 @@ modules:
       pkg-config returns nothing and no -lpcre is added.
       See: https://github.com/blendbyte/nginx-modules/issues/3
 
+  - name: nginx-module-zstd-static
+    description: "Zstandard static precompressed files module for nginx"
+    upstream_url: https://github.com/tokers/zstd-nginx-module.git
+    upstream_ref: "0.1.1"
+    upstream_version: "0.1.1"
+    packaging_revision: 1
+    replaces: null
+    module_so: ngx_http_zstd_static_module.so
+    nginx_context: http
+    submodules: false
+    build_deps:
+      - libzstd-dev
+    runtime_deps:
+      - libzstd1
+    load_order: 50
+    license: BSD-2-Clause
+    homepage: https://github.com/tokers/zstd-nginx-module
+    patches:
+      - file: filter/config
+        sed: 's|-l:libzstd\.a|-lzstd|g'
+      - file: static/config
+        sed: 's|-l:libzstd\.a|-lzstd|g'
+    notes: |
+      Same source as nginx-module-zstd; serves pre-compressed .zst files
+      (analogous to gzip_static / ngx_http_brotli_static_module).
+      Both subconfigs are patched for the same -fPIC / static-lib reason
+      as the filter module.
+
   - name: nginx-module-geoip2
     description: "MaxMind GeoIP2 lookup module for nginx (HTTP)"
     upstream_url: https://github.com/leev/ngx_http_geoip2_module.git
