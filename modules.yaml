@@ -177,13 +177,11 @@ modules:
     submodules: false
     build_deps:
       - libmodsecurity-dev
-      - libpcre3-dev
     runtime_deps:
       - libmodsecurity3
-      - libpcre3
     patches:
       - file: config
-        sed: 's|ngx_feature_libs="-lmodsecurity"|ngx_feature_libs="-lmodsecurity -lpcre"|g'
+        sed: 's@ngx_feature_libs="-lmodsecurity"@ngx_feature_libs="-lmodsecurity $(pkg-config --libs libpcre 2>/dev/null || true)"@g'
     load_order: 10  # Load early. WAF runs before other filters
     license: Apache-2.0
     homepage: https://github.com/owasp-modsecurity/ModSecurity-nginx
@@ -193,11 +191,13 @@ modules:
       Trustwave SpiderLabs to OWASP in February 2024; this is the
       canonical home now. OWASP CRS rules aren't packaged here, grab
       those from coreruleset.org.
-      The -lpcre patch ensures libpcre.so.3 is loaded when the module is
-      dlopen'd. nginx.org's nginx is built with PCRE2 and does not export
-      pcre_malloc, but libmodsecurity3 (Ubuntu/Debian) references it as an
-      undefined symbol expected to come from the calling process. Linking the
-      connector explicitly against PCRE1 satisfies that dependency.
+      The pkg-config patch conditionally adds -lpcre at build time. On
+      bookworm/jammy/noble, libmodsecurity3 was compiled with a PCRE1 compat
+      shim and exports pcre_malloc as an undefined symbol expected from the
+      caller; nginx.org's PCRE2 nginx doesn't supply it, so we link the
+      connector against libpcre.so.3 explicitly. On trixie/resolute, PCRE1
+      is absent and libmodsecurity3 no longer has this dependency, so
+      pkg-config returns nothing and no -lpcre is added.
       See: https://github.com/blendbyte/nginx-modules/issues/3
 
   - name: nginx-module-geoip2
@@ -266,13 +266,16 @@ modules:
     upstream_url: https://github.com/yaoweibin/ngx_http_substitutions_filter_module.git
     upstream_ref: master
     upstream_version: "0.6.4"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-http-subs-filter
     module_so: ngx_http_subs_filter_module.so
     nginx_context: http
     submodules: false
     build_deps: []
     runtime_deps: []
+    patches:
+      - file: config
+        sed: 's@ngx_module_libs=""@ngx_module_libs="$(pkg-config --libs libpcre 2>/dev/null || true)"@g'
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/yaoweibin/ngx_http_substitutions_filter_module
@@ -282,6 +285,9 @@ modules:
       occasional fixes for newer nginx ABIs). The "nginx-modules" fork
       that's often referenced online is actually a stale 2014 mirror
       that doesn't have the dynamic module fix.
+      The pkg-config patch conditionally links against libpcre.so.3 on
+      bookworm/jammy/noble where nginx.org's PCRE2 nginx does not export
+      PCRE1 symbols (pcre_fullinfo etc.) that this module uses directly.
 
   - name: nginx-module-cache-purge
     description: "Purge content from FastCGI/proxy/SCGI/uWSGI caches in nginx"
