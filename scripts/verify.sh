@@ -67,6 +67,11 @@ docker run --rm \
 
         echo "nginx version: $(nginx -v 2>&1 | cut -d/ -f2)"
 
+        # nginx.org nginx.conf does not include modules-enabled by default.
+        # Prepend the include so load_module snippets are actually parsed by
+        # nginx -t and nginx start, which is what triggers dlopen() on the .so.
+        sed -i "1s|^|include /etc/nginx/modules-enabled/*.conf;\n|" /etc/nginx/nginx.conf
+
         FAIL=0
         for deb in /debs/*.deb; do
             pkg=$(dpkg-deb -f "$deb" Package)
@@ -80,21 +85,42 @@ docker run --rm \
                 continue
             fi
 
-            # Verify nginx config still valid
-            if ! nginx -t 2>&1; then
-                echo "  ❌ nginx -t failed after installing $pkg"
-                FAIL=$((FAIL+1))
-                continue
-            fi
-
             # Verify the module .so was actually deployed
             so_path=$(dpkg -L "$pkg" | grep "/usr/lib/nginx/modules/.*\.so$" || true)
             if [[ -z "$so_path" ]]; then
                 echo "  ❌ no .so file found in package $pkg"
                 FAIL=$((FAIL+1))
+                apt-get remove -y "$pkg" > /dev/null 2>&1 || true
                 continue
             fi
             echo "  ✓ $so_path installed"
+
+            # Config check: catches bad snippets and dlopen failures
+            if ! nginx -t 2>&1; then
+                echo "  ❌ nginx -t failed for $pkg"
+                FAIL=$((FAIL+1))
+                apt-get remove -y "$pkg" > /dev/null 2>&1 || true
+                continue
+            fi
+            echo "  ✓ nginx -t passed"
+
+            # Full start + reload + stop: catches init failures that only
+            # surface when workers actually fork (nginx -t skips this)
+            if ! nginx 2>&1; then
+                echo "  ❌ nginx start failed for $pkg"
+                FAIL=$((FAIL+1))
+                apt-get remove -y "$pkg" > /dev/null 2>&1 || true
+                continue
+            fi
+            if ! nginx -s reload 2>&1; then
+                echo "  ❌ nginx reload failed for $pkg"
+                FAIL=$((FAIL+1))
+                nginx -s stop > /dev/null 2>&1 || true
+                apt-get remove -y "$pkg" > /dev/null 2>&1 || true
+                continue
+            fi
+            nginx -s stop > /dev/null 2>&1 || true
+            echo "  ✓ nginx start/reload/stop passed"
 
             # Remove before next iteration to test independence
             apt-get remove -y "$pkg" > /dev/null 2>&1 || true
