@@ -28,6 +28,11 @@ on:
         required: false
         default: false
         type: boolean
+      no_cache:
+        description: 'Skip Docker layer cache (set true when nginx version changes)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -93,6 +98,7 @@ jobs:
           file: builders/${{ matrix.codename }}.Dockerfile
           tags: blendbyte/nginx-modules-builder:${{ matrix.codename }}-${{ matrix.arch }}
           load: true
+          no-cache: ${{ inputs.no_cache == true }}
           cache-from: type=gha,scope=builder-${{ matrix.codename }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=builder-${{ matrix.codename }}-${{ matrix.arch }}
           platforms: linux/${{ matrix.arch }}

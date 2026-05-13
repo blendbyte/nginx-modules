@@ -69,7 +69,8 @@ jobs:
               workflow_id: 'build.yml',
               ref: 'main',
               inputs: {
-                publish: 'true'
+                publish: 'true',
+                no_cache: 'true'
               }
             });
 
