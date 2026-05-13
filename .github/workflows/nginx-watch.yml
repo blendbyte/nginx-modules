@@ -28,12 +28,11 @@ jobs:
           PACKAGES_URL="https://nginx.org/packages/debian/dists/bookworm/nginx/binary-amd64/Packages"
 
           LATEST=$(curl -fsSL "${PACKAGES_URL}" | \
-            awk '/^Package: nginx$/,/^$/' | \
-            awk -F': ' '/^Version:/ { print $2; exit }' | \
+            awk '/^Package:/ { pkg=$2 } /^Version:/ && pkg=="nginx" { v=$2 } END { print v }' | \
             cut -d- -f1)
 
           if [[ -z "${LATEST}" ]]; then
-            echo "ERROR: could not parse nginx version from ${PACKAGES_URL}"
+            echo "ERROR: could not parse nginx version from ${PACKAGES_URL}" >&2
             exit 1
           fi
 
@@ -56,7 +55,7 @@ jobs:
 
       - name: Trigger build if new version
         if: steps.latest.outputs.version != steps.last_built.outputs.version
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const latest = '${{ steps.latest.outputs.version }}';
