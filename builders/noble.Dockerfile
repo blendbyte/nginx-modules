@@ -52,6 +52,7 @@ RUN apt-get install -y --no-install-recommends nginx && \
     rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        libbrotli-dev \
         libzstd-dev \
         libmodsecurity-dev \
         libmaxminddb-dev \

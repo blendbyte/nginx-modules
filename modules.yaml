@@ -87,41 +87,70 @@ modules:
     upstream_url: https://github.com/nginx-modules/ngx_brotli.git
     upstream_ref: master  # nginx-modules fork has no formal release tags
     upstream_version: "1.0.0"  # synthetic; bump build_serial on master commits
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-http-brotli-filter
     module_so: ngx_http_brotli_filter_module.so
     nginx_context: http
-    submodules: true  # bundles libbrotli as a git submodule
-    build_deps: []
-    runtime_deps: []
+    submodules: false  # system libbrotli used; bundled submodule not needed
+    build_deps:
+      - libbrotli-dev
+    runtime_deps:
+      - libbrotli1
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/nginx-modules/ngx_brotli
+    # Patch notes:
+    # - sed: ngx_brotli's config searches /usr/local/include/brotli/encode.h for
+    #   a system libbrotli, falling back to the bundled v1.0.4 submodule. On
+    #   Debian/Ubuntu, libbrotli-dev installs to /usr/include, so the check
+    #   always fails and the old bundled library is used. libbrotli 1.0.4 has a
+    #   streaming encoder bug at quality 3: BROTLI_OPERATION_FINISH does not
+    #   fully finalize the stream in one call for the non-block-split code path
+    #   (quality < 4), producing a truncated brotli frame that decompressors
+    #   reject. System libbrotli 1.0.9 (shipped on all our target distros) has
+    #   this fixed. Change the search path from /usr/local to /usr so the config
+    #   finds the system library and links against it (-lbrotlienc) instead of
+    #   compiling the buggy bundled source.
+    patches:
+      - file: config
+        sed: 's|brotli="/usr/local"|brotli="/usr"|'
     notes: |
       google/ngx_brotli has gone effectively dormant. Last meaningful
       commit predates 2024, and eustas/ngx_brotli (the lead's own fork)
       was publicly archived. The nginx-modules community fork is the
-      maintained successor. Bundles libbrotli via submodule, no system
-      libbrotli dep needed.
+      maintained successor.
+
+      Previously bundled libbrotli v1.0.4 via git submodule. Switched to
+      system libbrotli (libbrotli-dev / libbrotli1) to fix a quality-3
+      streaming truncation bug present in the bundled v1.0.4 encoder but
+      fixed in v1.0.9 (shipped on all target distros). The ngx_brotli
+      config already supports system libbrotli via -lbrotlienc; it only
+      needed the search path corrected from /usr/local to /usr.
 
   - name: nginx-module-brotli-static
     description: "Brotli static-precompressed-files module for nginx"
     upstream_url: https://github.com/nginx-modules/ngx_brotli.git
     upstream_ref: master
     upstream_version: "1.0.0"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-http-brotli-static
     module_so: ngx_http_brotli_static_module.so
     nginx_context: http
-    submodules: true
-    build_deps: []
-    runtime_deps: []
+    submodules: false  # system libbrotli used; bundled submodule not needed
+    build_deps:
+      - libbrotli-dev  # needed at build time even though static .so doesn't link it
+    runtime_deps: []   # static module serves pre-compressed files; no libbrotli at runtime
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/nginx-modules/ngx_brotli
+    patches:
+      - file: config
+        sed: 's|brotli="/usr/local"|brotli="/usr"|'
     notes: |
       Same source as nginx-module-brotli, different .so artifact.
-      Build script clones once and produces both .debs.
+      The static module only serves pre-compressed .br files; it has no
+      encoder dependency. libbrotli-dev is still required at build time
+      because the shared config builds both .so files in one make run.
 
   - name: nginx-module-zstd
     description: "Zstandard compression filter module for nginx"

@@ -66,6 +66,7 @@ RUN apt-get install -y --no-install-recommends nginx && \
 # (Doing this in the image rather than at build time saves ~30s per CI run.
 # When modules.yaml grows, regenerate this list from the build_deps fields.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        libbrotli-dev \
         libzstd-dev \
         libmodsecurity-dev \
         libmaxminddb-dev \
