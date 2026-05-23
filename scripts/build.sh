@@ -286,13 +286,21 @@ EOF
     local build_deps_str="dpkg-dev"
     [[ -n "$build_deps_csv" ]] && build_deps_str+=", $build_deps_csv"
 
-    # Optional Replaces/Conflicts/Provides block (sury migration)
-    local replaces_block=""
+    # Conflicts: always block nginx upgrades past the built version so that
+    # apt full-upgrade cannot silently remove modules to upgrade nginx.
+    # Without this, Depends: nginx (= N) only prevents apt upgrade from
+    # touching nginx, but full-upgrade/dist-upgrade can still resolve the
+    # dependency mismatch by removing the module package.
+    local conflicts="nginx (>> $NGINX_FULL_VERSION)"
+
+    # Optional Replaces/Provides block (sury migration); conflicts merged above.
+    local migration_block=""
     if [[ -n "$replaces" ]]; then
-        replaces_block="Provides: $replaces"$'\n'
-        replaces_block+="Replaces: $replaces"$'\n'
-        replaces_block+="Conflicts: $replaces"$'\n'
+        migration_block="Provides: $replaces"$'\n'
+        migration_block+="Replaces: $replaces"$'\n'
+        conflicts+=", $replaces"
     fi
+    local conflicts_line="Conflicts: $conflicts"$'\n'
 
     # debian/control
     # Note: \${shlibs:Depends} and \${misc:Depends} are LITERAL in the
@@ -313,7 +321,7 @@ Homepage: $homepage
 Package: $name
 Architecture: any
 Depends: $depends, \${shlibs:Depends}, \${misc:Depends}
-${replaces_block}Description: $desc
+${conflicts_line}${migration_block}Description: $desc
  This package provides the $module_so dynamic module for nginx,
  built against the official nginx.org stable release.
  .
