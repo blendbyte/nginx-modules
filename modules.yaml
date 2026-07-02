@@ -271,7 +271,7 @@ modules:
     upstream_url: https://github.com/leev/ngx_http_geoip2_module.git
     upstream_ref: "3.4"
     upstream_version: "3.4"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-http-geoip2
     module_so: ngx_http_geoip2_module.so
     nginx_context: http
@@ -283,6 +283,13 @@ modules:
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/leev/ngx_http_geoip2_module
+    # fix-stale-address-on-reload-pr135.patch: after MMDB auto_reload, the
+    # per-database cached address wasn't cleared. The next request from the
+    # same IP hit the cache and used database->result, which holds pointers
+    # into the old (now closed/unmapped) MMDB - stale or garbage geo data.
+    # Fix: zero database->address after the mmdb swap to force a fresh lookup.
+    patches:
+      - patch: patches/nginx-module-geoip2/fix-stale-address-on-reload-pr135.patch
     notes: |
       Original maintainer, small and stable since 2022. GeoLite2 .mmdb
       database files aren't bundled, you'll have to grab them from
@@ -294,7 +301,7 @@ modules:
     upstream_url: https://github.com/leev/ngx_http_geoip2_module.git
     upstream_ref: "3.4"
     upstream_version: "3.4"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-stream-geoip2
     module_so: ngx_stream_geoip2_module.so
     nginx_context: stream
@@ -306,14 +313,16 @@ modules:
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/leev/ngx_http_geoip2_module
+    patches:
+      - patch: patches/nginx-module-geoip2/fix-stale-address-on-reload-pr135.patch
     notes: |
       Same source as nginx-module-geoip2; stream-context variant.
 
   - name: nginx-module-headers-more
     description: "Set, add, and clear arbitrary output headers in nginx"
     upstream_url: https://github.com/openresty/headers-more-nginx-module.git
-    upstream_ref: "v0.39"
-    upstream_version: "0.39"
+    upstream_ref: "v0.40"
+    upstream_version: "0.40"
     packaging_revision: 1
     replaces: libnginx-mod-http-headers-more-filter
     module_so: ngx_http_headers_more_filter_module.so
@@ -325,7 +334,11 @@ modules:
     license: BSD-2-Clause
     homepage: https://github.com/openresty/headers-more-nginx-module
     notes: |
-      Active maintenance; v0.39 released 2025-07-04. OpenResty team.
+      Active maintenance; v0.40 released 2026-05-12. OpenResty team.
+      v0.40 fixes an OOB read in Content-Type charset parsing (missing
+      end-pointer guard in the ';' scan) and a per-header is_builtin_header
+      flag that wasn't reset between headers in the same more_set_headers
+      directive, causing incorrect handler dispatch for later headers.
 
   - name: nginx-module-substitutions
     description: "Regex and string substitutions in response bodies for nginx"
@@ -342,6 +355,7 @@ modules:
     patches:
       - file: config
         sed: 's@ngx_module_libs=""@ngx_module_libs="$(pkg-config --libs libpcre 2>/dev/null || true)"@g'
+      - patch: patches/nginx-module-substitutions/fix-null-check-init-context.patch
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/yaoweibin/ngx_http_substitutions_filter_module

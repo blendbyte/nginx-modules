@@ -1,0 +1,13 @@
+diff --git a/ngx_http_subs_filter_module.c b/ngx_http_subs_filter_module.c
+index 13355bf..e5c2f46 100644
+--- a/ngx_http_subs_filter_module.c
++++ b/ngx_http_subs_filter_module.c
+@@ -294,7 +294,7 @@ ngx_http_subs_init_context(ngx_http_request_t *r)
+ 
+     ctx->sub_pairs = ngx_array_create(r->pool, slcf->sub_pairs->nelts,
+                                       sizeof(sub_pair_t));
+-    if (slcf->sub_pairs == NULL) {
++    if (ctx->sub_pairs == NULL) {
+         return NGX_ERROR;
+     }
+ 
