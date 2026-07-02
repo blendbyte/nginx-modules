@@ -183,6 +183,13 @@ modules:
     # - fix-brotli-ordering-pr44.patch: run zstd before brotli when both are
     #   loaded (combined with the module-order fix from master commit f4ba115e,
     #   never tagged). Without this, clients that support both always get brotli.
+    # - fix-encoding-check-pr43.patch: three bugs in Accept-Encoding handling:
+    #   (1) h->next not zeroed on nginx >= 1.23.0 (stale pointer in header list);
+    #   (2) zstd;q=0 (RFC 7231 "do not compress") was ignored;
+    #   (3) static module ngx_strcasestrn off-by-one (sizeof-1 vs sizeof-2)
+    #   that caused "gzip, zstd, br" style headers (zstd mid-list) to never
+    #   match; only a leading or trailing zstd token worked. Extracts shared
+    #   check_request() into common/ used by both filter and static modules.
     patches:
       - file: filter/config
         sed: 's|-l:libzstd\.a|-lzstd|g'
@@ -190,6 +197,7 @@ modules:
         sed: 's|-l:libzstd\.a|-lzstd|g'
       - patch: patches/nginx-module-zstd/fix-filter-bugs-pr23-pr49.patch
       - patch: patches/nginx-module-zstd/fix-brotli-ordering-pr44.patch
+      - patch: patches/nginx-module-zstd/fix-encoding-check-pr43.patch
     notes: |
       Upstream (tokers/zstd-nginx-module) is lightly maintained; critical bug
       fixes are applied as patches from unmerged PRs. See patch comments above.
@@ -251,6 +259,7 @@ modules:
         sed: 's|-l:libzstd\.a|-lzstd|g'
       - file: static/config
         sed: 's|-l:libzstd\.a|-lzstd|g'
+      - patch: patches/nginx-module-zstd/fix-encoding-check-pr43.patch
     notes: |
       Same source as nginx-module-zstd; serves pre-compressed .zst files
       (analogous to gzip_static / ngx_http_brotli_static_module).

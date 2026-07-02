@@ -1,0 +1,404 @@
+diff --git a/common/ngx_http_zstd_common.c b/common/ngx_http_zstd_common.c
+new file mode 100644
+index 0000000..67b895f
+--- /dev/null
++++ b/common/ngx_http_zstd_common.c
+@@ -0,0 +1,64 @@
++#include "ngx_http_zstd_common.h"
++
++static /* const */ char kEncoding[] = "zstd";
++static const size_t kEncodingLen = 4;
++
++static ngx_int_t check_accept_encoding(ngx_http_request_t* req) {
++  ngx_table_elt_t* accept_encoding_entry;
++  ngx_str_t* accept_encoding;
++  u_char* cursor;
++  u_char* end;
++  u_char before;
++  u_char after;
++
++  accept_encoding_entry = req->headers_in.accept_encoding;
++  if (accept_encoding_entry == NULL) return NGX_DECLINED;
++  accept_encoding = &accept_encoding_entry->value;
++
++  if (accept_encoding->len < kEncodingLen) return NGX_DECLINED;
++
++  cursor = accept_encoding->data;
++  end = cursor + accept_encoding->len;
++  while (1) {
++    u_char digit;
++    /* It would be an idiotic idea to rely on compiler to produce performant
++       binary, that is why we just do -1 at every call site. */
++    cursor = ngx_strcasestrn(cursor, kEncoding, kEncodingLen - 1);
++    if (cursor == NULL) return NGX_DECLINED;
++    before = (cursor == accept_encoding->data) ? ' ' : cursor[-1];
++    cursor += kEncodingLen;
++    after = (cursor >= end) ? ' ' : *cursor;
++    if (before != ',' && before != ' ') continue;
++    if (after != ',' && after != ' ' && after != ';') continue;
++
++    /* Check for ";q=0[.[0[0[0]]]]" */
++    while (*cursor == ' ') cursor++;
++    if (*(cursor++) != ';') break;
++    while (*cursor == ' ') cursor++;
++    if (*(cursor++) != 'q') break;
++    while (*cursor == ' ') cursor++;
++    if (*(cursor++) != '=') break;
++    while (*cursor == ' ') cursor++;
++    if (*(cursor++) != '0') break;
++    if (*(cursor++) != '.') return NGX_DECLINED; /* ;q=0, */
++    digit = *(cursor++);
++    if (digit < '0' || digit > '9') return NGX_DECLINED; /* ;q=0., */
++    if (digit > '0') break;
++    digit = *(cursor++);
++    if (digit < '0' || digit > '9') return NGX_DECLINED; /* ;q=0.0, */
++    if (digit > '0') break;
++    digit = *(cursor++);
++    if (digit < '0' || digit > '9') return NGX_DECLINED; /* ;q=0.00, */
++    if (digit > '0') break;
++    return NGX_DECLINED; /* ;q=0.000 */
++  }
++  return NGX_OK;
++}
++
++ngx_int_t ngx_http_zstd_check_request(ngx_http_request_t* req) {
++  if (req != req->main) return NGX_DECLINED;
++  if (check_accept_encoding(req) != NGX_OK) return NGX_DECLINED;
++  req->gzip_tested = 1;
++  req->gzip_ok = 0;
++  return NGX_OK;
++}
+diff --git a/common/ngx_http_zstd_common.h b/common/ngx_http_zstd_common.h
+new file mode 100644
+index 0000000..ccdb1d3
+--- /dev/null
++++ b/common/ngx_http_zstd_common.h
+@@ -0,0 +1,8 @@
++#ifndef _NGX_HTTP_ZSTD_COMMON_INCLUDED_
++#define _NGX_HTTP_ZSTD_COMMON_INCLUDED_
++
++#include <ngx_http.h>
++
++ngx_int_t ngx_http_zstd_check_request(ngx_http_request_t* req);
++
++#endif /* _NGX_HTTP_ZSTD_COMMON_INCLUDED_ */
+\ No newline at end of file
+diff --git a/filter/config b/filter/config
+index 3c375f7..143cae5 100644
+--- a/filter/config
++++ b/filter/config
+@@ -98,7 +98,7 @@ fi
+ 
+ NGX_LD_OPT="$ngx_zstd_opt_L $NGX_LD_OPT"
+ 
+-HTTP_ZSTD_SRCS="$ngx_addon_dir/filter/ngx_http_zstd_filter_module.c"
++HTTP_ZSTD_SRCS="$ngx_addon_dir/common/ngx_http_zstd_common.c $ngx_addon_dir/filter/ngx_http_zstd_filter_module.c"
+ 
+ ngx_addon_name=ngx_http_zstd_filter_module
+ ngx_module_type=HTTP_FILTER
+diff --git a/filter/ngx_http_zstd_filter_module.c b/filter/ngx_http_zstd_filter_module.c
+index 2ff5ed9..f20e719 100644
+--- a/filter/ngx_http_zstd_filter_module.c
++++ b/filter/ngx_http_zstd_filter_module.c
+@@ -10,6 +10,8 @@
+ 
+ #include <zstd.h>
+ 
++#include "../common/ngx_http_zstd_common.h"
++
+ 
+ #define NGX_HTTP_ZSTD_FILTER_COMPRESS       0
+ #define NGX_HTTP_ZSTD_FILTER_FLUSH          1
+@@ -88,8 +90,6 @@ static ZSTD_CStream *ngx_http_zstd_filter_create_cstream(ngx_http_request_t *r,
+     ngx_http_zstd_ctx_t *ctx);
+ static ngx_int_t ngx_http_zstd_filter_compress(ngx_http_request_t *r,
+     ngx_http_zstd_ctx_t *ctx);
+-static ngx_int_t ngx_http_zstd_accept_encoding(ngx_str_t *ae);
+-static ngx_int_t ngx_http_zstd_ok(ngx_http_request_t *r);
+ static ngx_int_t ngx_http_zstd_filter_init(ngx_conf_t *cf);
+ static void * ngx_http_zstd_create_main_conf(ngx_conf_t *cf);
+ static char *ngx_http_zstd_init_main_conf(ngx_conf_t *cf, void *conf);
+@@ -194,28 +194,49 @@ static ngx_int_t
+ ngx_http_zstd_header_filter(ngx_http_request_t *r)
+ {
+     ngx_table_elt_t           *h;
+-    ngx_http_zstd_loc_conf_t  *zlcf;
++    ngx_http_zstd_loc_conf_t  *conf;
+     ngx_http_zstd_ctx_t       *ctx;
+ 
+-    zlcf = ngx_http_get_module_loc_conf(r, ngx_http_zstd_filter_module);
++    conf = ngx_http_get_module_loc_conf(r, ngx_http_zstd_filter_module);
+ 
+-    if (!zlcf->enable
+-        || (r->headers_out.status != NGX_HTTP_OK
+-            && r->headers_out.status != NGX_HTTP_FORBIDDEN
+-            && r->headers_out.status != NGX_HTTP_NOT_FOUND)
+-       || (r->headers_out.content_encoding
+-           && r->headers_out.content_encoding->value.len)
+-       || (r->headers_out.content_length_n != -1
+-           && r->headers_out.content_length_n < zlcf->min_length)
+-       || ngx_http_test_content_type(r, &zlcf->types) == NULL
+-       || r->header_only)
+-    {
++    /* Filter only if enabled. */
++    if (!conf->enable) {
++        return ngx_http_next_header_filter(r);
++    }
++
++    /* Only compress OK / forbidden / not found responses. */
++    if (r->headers_out.status != NGX_HTTP_OK &&
++        r->headers_out.status != NGX_HTTP_FORBIDDEN &&
++        r->headers_out.status != NGX_HTTP_NOT_FOUND) {
++        return ngx_http_next_header_filter(r);
++    }
++
++    /* Bypass "header only" responses. */
++    if (r->header_only) {
++        return ngx_http_next_header_filter(r);
++    }
++
++    /* Bypass already compressed responses. */
++    if (r->headers_out.content_encoding &&
++        r->headers_out.content_encoding->value.len) {
++        return ngx_http_next_header_filter(r);
++    }
++
++    /* If response size is known, do not compress tiny responses. */
++    if (r->headers_out.content_length_n != -1 &&
++        r->headers_out.content_length_n < conf->min_length) {
++        return ngx_http_next_header_filter(r);
++    }
++
++    /* Compress only certain MIME-typed responses. */
++    if (ngx_http_test_content_type(r, &conf->types) == NULL) {
+         return ngx_http_next_header_filter(r);
+     }
+ 
+     r->gzip_vary = 1;
+ 
+-    if (ngx_http_zstd_ok(r) != NGX_OK) {
++    /* Check if client support zstd encoding. */
++    if (ngx_http_zstd_check_request(r) != NGX_OK) {
+         return ngx_http_next_header_filter(r);
+     }
+ 
+@@ -229,12 +250,17 @@ ngx_http_zstd_header_filter(ngx_http_request_t *r)
+     ctx->request = r;
+     ctx->last_out = &ctx->out;
+ 
++    /* Prepare response headers, so that following filters in the chain will
++     notice that response body is compressed. */
+     h = ngx_list_push(&r->headers_out.headers);
+     if (h == NULL) {
+         return NGX_ERROR;
+     }
+ 
+     h->hash = 1;
++#if nginx_version >= 1023000
++    h->next = NULL;
++#endif
+     ngx_str_set(&h->key, "Content-Encoding");
+     ngx_str_set(&h->value, "zstd");
+     r->headers_out.content_encoding = h;
+@@ -248,7 +274,6 @@ ngx_http_zstd_header_filter(ngx_http_request_t *r)
+     return ngx_http_next_header_filter(r);
+ }
+ 
+-
+ static ngx_int_t
+ ngx_http_zstd_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
+ {
+@@ -672,61 +697,6 @@ failed:
+ }
+ 
+ 
+-static ngx_int_t
+-ngx_http_zstd_accept_encoding(ngx_str_t *ae)
+-{
+-    u_char  *p;
+-
+-    p = ngx_strcasestrn(ae->data, "zstd", sizeof("zstd") - 2);
+-    if (p == NULL) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (p == ae->data || (*(p - 1) == ',' || *(p - 1) == ' ')) {
+-
+-        p += sizeof("zstd") - 1;
+-
+-        if (p == ae->data + ae->len || *p == ',' || *p == ' ' || *p == ';') {
+-            return NGX_OK;
+-        }
+-    }
+-
+-    return NGX_DECLINED;
+-}
+-
+-
+-static ngx_int_t
+-ngx_http_zstd_ok(ngx_http_request_t *r)
+-{
+-    ngx_table_elt_t  *ae;
+-
+-    if (r != r->main) {
+-        return NGX_DECLINED;
+-    }
+-
+-    ae = r->headers_in.accept_encoding;
+-    if (ae == NULL) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (ae->value.len < sizeof("zstd") - 1) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (ngx_memcmp(ae->value.data, "zstd", 4) != 0
+-        && ngx_http_zstd_accept_encoding(&ae->value) != NGX_OK)
+-    {
+-        return NGX_DECLINED;
+-    }
+-
+-
+-    r->gzip_tested = 1;
+-    r->gzip_ok = 0;
+-
+-    return NGX_OK;
+-}
+-
+-
+ static void *
+ ngx_http_zstd_create_main_conf(ngx_conf_t *cf)
+ {
+@@ -928,7 +898,6 @@ ngx_http_zstd_filter_alloc(void *opaque, size_t size)
+     return p;
+ }
+ 
+-
+ static ngx_int_t
+ ngx_http_zstd_add_variables(ngx_conf_t *cf)
+ {
+diff --git a/static/config b/static/config
+index 5c6e629..e1081c7 100644
+--- a/static/config
++++ b/static/config
+@@ -100,7 +100,7 @@ CFLAGS="$ngx_zstd_opt_I $CFLAGS"
+ NGX_LD_OPT="$ngx_zstd_opt_L $NGX_LD_OPT"
+ 
+ # build the ngx_http_zstd_static_module
+-HTTP_ZSTD_SRCS="$ngx_addon_dir/static/ngx_http_zstd_static_module.c"
++HTTP_ZSTD_SRCS="$ngx_addon_dir/common/ngx_http_zstd_common.c $ngx_addon_dir/static/ngx_http_zstd_static_module.c"
+ 
+ ngx_addon_name=ngx_http_zstd_static_module
+ ngx_module_type=HTTP
+diff --git a/static/ngx_http_zstd_static_module.c b/static/ngx_http_zstd_static_module.c
+index 3b247e9..1bd83a2 100644
+--- a/static/ngx_http_zstd_static_module.c
++++ b/static/ngx_http_zstd_static_module.c
+@@ -8,6 +8,8 @@
+ #include <ngx_core.h>
+ #include <ngx_http.h>
+ 
++#include "../common/ngx_http_zstd_common.h"
++
+ 
+ #define NGX_HTTP_ZSTD_STATIC_OFF        0
+ #define NGX_HTTP_ZSTD_STATIC_ON         1
+@@ -40,8 +42,6 @@ static ngx_command_t  ngx_http_zstd_static_commands[] = {
+ 
+ 
+ static ngx_int_t ngx_http_zstd_static_handler(ngx_http_request_t *r);
+-static ngx_int_t ngx_http_zstd_accept_encoding(ngx_str_t *ae);
+-static ngx_int_t ngx_http_zstd_ok(ngx_http_request_t *r);
+ static void * ngx_http_zstd_static_create_loc_conf(ngx_conf_t *cf);
+ static char * ngx_http_zstd_static_merge_loc_conf(ngx_conf_t *cf, void *parent,
+     void *child);
+@@ -78,7 +78,6 @@ ngx_module_t  ngx_http_zstd_static_module = {
+     NGX_MODULE_V1_PADDING
+ };
+ 
+-
+ static ngx_int_t
+ ngx_http_zstd_static_handler(ngx_http_request_t *r)
+ {
+@@ -110,7 +109,7 @@ ngx_http_zstd_static_handler(ngx_http_request_t *r)
+     }
+ 
+     if (zscf->enable == NGX_HTTP_ZSTD_STATIC_ON) {
+-        rc = ngx_http_zstd_ok(r);
++        rc = ngx_http_zstd_check_request(r);
+ 
+     } else {
+         rc = NGX_OK;
+@@ -241,6 +240,9 @@ ngx_http_zstd_static_handler(ngx_http_request_t *r)
+     }
+ 
+     h->hash = 1;
++#if nginx_version >= 1023000
++    h->next = NULL;
++#endif
+     ngx_str_set(&h->key, "Content-Encoding");
+     ngx_str_set(&h->value, "zstd");
+     r->headers_out.content_encoding = h;
+@@ -280,61 +282,6 @@ ngx_http_zstd_static_handler(ngx_http_request_t *r)
+ }
+ 
+ 
+-static ngx_int_t
+-ngx_http_zstd_ok(ngx_http_request_t *r)
+-{
+-    ngx_table_elt_t  *ae;
+-
+-    if (r != r->main) {
+-        return NGX_DECLINED;
+-    }
+-
+-    ae = r->headers_in.accept_encoding;
+-    if (ae == NULL) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (ae->value.len < sizeof("zstd") - 1) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (ngx_memcmp(ae->value.data, "zstd", 4) != 0
+-        && ngx_http_zstd_accept_encoding(&ae->value) != NGX_OK)
+-    {
+-        return NGX_DECLINED;
+-    }
+-
+-
+-    r->gzip_tested = 1;
+-    r->gzip_ok = 0;
+-
+-    return NGX_OK;
+-}
+-
+-
+-static ngx_int_t
+-ngx_http_zstd_accept_encoding(ngx_str_t *ae)
+-{
+-    u_char  *p;
+-
+-    p = ngx_strcasestrn(ae->data, "zstd", sizeof("zstd") - 1);
+-    if (p == NULL) {
+-        return NGX_DECLINED;
+-    }
+-
+-    if (p == ae->data || (*(p - 1) == ',' || *(p - 1) == ' ')) {
+-
+-        p += sizeof("zstd") - 1;
+-
+-        if (p == ae->data + ae->len || *p == ',' || *p == ' ' || *p == ';') {
+-            return NGX_OK;
+-        }
+-    }
+-
+-    return NGX_DECLINED;
+-}
+-
+-
+ static void *
+ ngx_http_zstd_static_create_loc_conf(ngx_conf_t *cf)
+ {
