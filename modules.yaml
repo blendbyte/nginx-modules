@@ -393,7 +393,7 @@ modules:
     upstream_url: https://github.com/aperezdc/ngx-fancyindex.git
     upstream_ref: "v0.5.2"
     upstream_version: "0.5.2"
-    packaging_revision: 1
+    packaging_revision: 2
     replaces: libnginx-mod-http-fancyindex
     module_so: ngx_http_fancyindex_module.so
     nginx_context: http
@@ -403,6 +403,13 @@ modules:
     load_order: 50
     license: BSD-2-Clause
     homepage: https://github.com/aperezdc/ngx-fancyindex
+    # fix-fd-leak-local-headerfooter-pr176.patch: ngx_fancyindex_conf_set_headerfooter()
+    # closes file.fd on all error paths but omits the close on the successful read path.
+    # Each nginx reload retains one fd per local header/footer directive, eventually
+    # exhausting the process fd limit (EMFILE / accept4() failures). One-line fix from
+    # upstream PR#176; present in v0.5.2 and v0.6.0.
+    patches:
+      - patch: patches/nginx-module-fancyindex/0001-close-fd-on-successful-local-headerfooter-read.patch
     notes: |
       Original maintainer (aperezdc) is active via master commits between
       tagged releases. Pin to v0.5.2 tag for now; consider bumping to a

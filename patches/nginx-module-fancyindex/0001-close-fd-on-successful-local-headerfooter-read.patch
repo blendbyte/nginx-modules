@@ -1,0 +1,10 @@
+--- a/ngx_http_fancyindex_module.c
++++ b/ngx_http_fancyindex_module.c
+@@ -282,6 +282,7 @@
+
+             n -= r;
+         }
++        ngx_close_file(file.fd);
+         item->local.data[item->local.len] = '\0';
+     }
+
