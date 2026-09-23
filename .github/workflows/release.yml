@@ -17,6 +17,11 @@ permissions:
   contents: read
   actions: read
 
+# Every production release shares one database, regardless of source branch.
+concurrency:
+  group: apt-repository-production
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: publish to apt.blendbyte.net/nginx
@@ -37,10 +42,41 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install reprepro and gnupg
+      - name: Validate source build
+        uses: actions/github-script@v9
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        with:
+          script: |
+            if (!/^[0-9]+$/.test(process.env.BUILD_RUN_ID)) {
+              throw new Error('build_run_id must be a numeric Actions run ID');
+            }
+            // Automatic publication is dispatched by the build's final job,
+            // which can still be finishing when this release starts.
+            for (let attempt = 0; attempt < 24; attempt++) {
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: Number(process.env.BUILD_RUN_ID)
+              });
+              if (run.path !== '.github/workflows/build.yml' ||
+                  run.head_repository?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                throw new Error('Only the build workflow from this repository can be published');
+              }
+              if (run.status === 'completed') {
+                if (run.conclusion !== 'success') {
+                  throw new Error('The source build did not succeed');
+                }
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            throw new Error('The source build has not completed; retry after it finishes');
+
+      - name: Install repository tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends reprepro gnupg
+          sudo apt-get install -y --no-install-recommends reprepro gnupg python3-debian python3-yaml
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
@@ -48,6 +84,7 @@ jobs:
           run-id: ${{ inputs.build_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: ./downloaded-artifacts
+          pattern: debs-*
           merge-multiple: false
 
       - name: Consolidate artifacts
@@ -60,12 +97,13 @@ jobs:
           ls -la ./artifacts/
 
       - name: Set up GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
-          # Write the secret to a file rather than passing it as an env
-          # var or via command line where it could leak into ps output.
+          # Avoid interpolating the private key into the generated shell script.
           mkdir -m 700 -p ./gnupg
-          echo '${{ secrets.GPG_PRIVATE_KEY }}' > /tmp/gpg-key.asc
-          chmod 600 /tmp/gpg-key.asc
+          umask 077
+          printf '%s\n' "$GPG_PRIVATE_KEY" > /tmp/gpg-key.asc
           GNUPGHOME="$PWD/gnupg" gpg --batch --import /tmp/gpg-key.asc 2>&1 | tail -5
 
       - name: Initialize reprepro tree
@@ -89,36 +127,25 @@ jobs:
           basedir $PWD/apt-repo
           EOF
 
-      # Pull db/ and dists/ from S3 — not pool/.
-      # reprepro uses db/ as its source of truth for which packages are
-      # already registered, so it doesn't need the actual .deb files.
-      # Skipping pool/ avoids downloading all historical packages on every run.
-      # On first publish the bucket prefix is empty so the sync is a no-op.
       - name: Pull existing apt repo state
-        if: ${{ !inputs.dry_run }}
         run: |
-          aws s3 sync "s3://${BUCKET}/db/"    ./apt-repo/db/
-          aws s3 sync "s3://${BUCKET}/dists/" ./apt-repo/dists/
+          bash scripts/sync-repo.sh pull ./apt-repo "s3://${BUCKET}"
 
-      - name: Add new packages to repo
+      - name: Back up restored repository state
         run: |
-          mkdir -p ./apt-repo/db
+          tar -czf repo-state-before.tar.gz -C apt-repo db dists
 
+      - name: Retain repository state for recovery
+        uses: actions/upload-artifact@v7
+        with:
+          name: repo-state-before
+          path: repo-state-before.tar.gz
+          retention-days: 30
+
+      - name: Validate state and merge packages
+        run: |
           export GNUPGHOME="$PWD/gnupg"
-          for codename in $CODENAMES; do
-            shopt -s nullglob
-            debs=( ./artifacts/*~${codename}*.deb )
-            shopt -u nullglob
-            if (( ${#debs[@]} == 0 )); then
-              echo "  No new packages for $codename"
-              continue
-            fi
-            echo "  Codename $codename:"
-            for deb in "${debs[@]}"; do
-              echo "    + $(basename "$deb")"
-              reprepro --basedir ./apt-repo includedeb "$codename" "$deb"
-            done
-          done
+          /usr/bin/python3 scripts/prepare-release.py ./apt-repo ./artifacts
 
       - name: Export public keyring
         run: |
@@ -130,25 +157,21 @@ jobs:
 
       - name: Write status.txt
         run: |
-          nginx_version=$(ls ./artifacts/*.deb | head -1 \
+          debs=( ./artifacts/*.deb )
+          nginx_version=$(dpkg-deb -f "${debs[0]}" Version \
             | grep -oP '(?<=\+nginx)[0-9]+\.[0-9]+\.[0-9]+')
-          echo "nginx ${nginx_version} / last built on $(date -u +'%Y-%m-%d')" \
+          echo "nginx ${nginx_version} / last package update on $(date -u +'%Y-%m-%d')" \
             > ./apt-repo/status.txt
 
       - name: Show what would be uploaded (dry run)
         if: ${{ inputs.dry_run }}
         run: |
-          echo "DRY_RUN set. Skipping upload."
-          echo "Local apt-repo/ tree:"
-          find ./apt-repo -maxdepth 3 -type f | head -30
+          bash scripts/sync-repo.sh push ./apt-repo "s3://${BUCKET}" --dry-run
 
-      # Push back to S3. aws s3 sync without --delete preserves existing
-      # pool/ packages already in the bucket. conf/ is excluded because it
-      # is dynamically generated on each run and not needed by apt clients.
       - name: Push apt repo to production
         if: ${{ !inputs.dry_run }}
         run: |
-          aws s3 sync ./apt-repo/ "s3://${BUCKET}/" --exclude 'conf/*'
+          bash scripts/sync-repo.sh push ./apt-repo "s3://${BUCKET}"
 
       - name: Cleanup secrets
         if: always()

@@ -108,6 +108,12 @@ yq -o json '.modules'   "$RESOLVED_REFS"  > "$RESOLVED_JSON"
 
 mod_count="$(jq 'length' "$MODULES_JSON")"
 
+if [[ -n "$ONLY_MODULE" ]] && ! jq -e --arg name "$ONLY_MODULE" \
+    'any(.[]; .name == $name)' "$MODULES_JSON" >/dev/null; then
+    echo "ERROR: unknown module: $ONLY_MODULE" >&2
+    exit 1
+fi
+
 # ─── Schema validation (fail fast, before any clone or build) ───────
 echo "Validating modules.yaml schema..."
 

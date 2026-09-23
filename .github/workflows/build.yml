@@ -55,7 +55,17 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       - name: Resolve refs
-        run: ./scripts/resolve-refs.sh
+        env:
+          ONLY_MODULE: ${{ inputs.only_module }}
+        run: |
+          if [[ -n "$ONLY_MODULE" ]]; then
+            yq -o=json '.modules' modules.yaml | jq -e --arg name "$ONLY_MODULE" \
+              'any(.[]; .name == $name)' >/dev/null || {
+              echo "Unknown module: $ONLY_MODULE" >&2
+              exit 1
+            }
+          fi
+          ./scripts/resolve-refs.sh
 
       - name: Upload resolved refs
         id: upload
@@ -104,6 +114,8 @@ jobs:
           platforms: linux/${{ matrix.arch }}
 
       - name: Build module packages
+        env:
+          ONLY_MODULE: ${{ inputs.only_module }}
         run: |
           # Create the artifacts directory with permissive mode so the
           # container's unprivileged builder user (UID 1000) can write
@@ -118,7 +130,7 @@ jobs:
             -v "${PWD}/artifacts:/artifacts" \
             -e ARCH=${{ matrix.arch }} \
             -e BUILD_SERIAL=${{ github.run_number }} \
-            -e ONLY_MODULE='${{ inputs.only_module }}' \
+            -e ONLY_MODULE \
             blendbyte/nginx-modules-builder:${{ matrix.codename }}-${{ matrix.arch }} \
             -c '/workspace/scripts/build.sh'
 

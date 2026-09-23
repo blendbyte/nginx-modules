@@ -1,0 +1,34 @@
+name: test release safety
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/prepare-release.py'
+      - 'scripts/sync-repo.sh'
+      - 'tests/**'
+      - 'modules.yaml'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/prepare-release.py'
+      - 'scripts/sync-repo.sh'
+      - 'tests/**'
+      - 'modules.yaml'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build test environment
+        run: docker build -f tests/release.Dockerfile -t nginx-release-tests .
+      - name: Check shell script
+        run: docker run --rm -v "$PWD:/workspace:ro" nginx-release-tests shellcheck scripts/sync-repo.sh
+      - name: Test partial releases and failure cases
+        run: docker run --rm -v "$PWD:/workspace:ro" nginx-release-tests
