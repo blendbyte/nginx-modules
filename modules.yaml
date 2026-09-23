@@ -372,8 +372,8 @@ modules:
   - name: nginx-module-cache-purge
     description: "Purge content from FastCGI/proxy/SCGI/uWSGI caches in nginx"
     upstream_url: https://github.com/nginx-modules/ngx_cache_purge.git
-    upstream_ref: master
-    upstream_version: "2.5.6"
+    upstream_ref: "3.0.3"
+    upstream_version: "3.0.3"
     packaging_revision: 1
     replaces: libnginx-mod-http-cache-purge
     module_so: ngx_http_cache_purge_module.so
